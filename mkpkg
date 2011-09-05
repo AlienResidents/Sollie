@@ -4,23 +4,23 @@ use Cwd;
 use strict;
 use warnings;
 
+# Who said patience is a virtue?
 $|=1;
 
+# These are all global values
 use vars qw($USAGE $baseDir $untarStatus $pkgVersion $pkgMaintainer
-		$pkgEmail $pkgVendor $pkg_desc $temp $badPerms $pkgName $tar $pkgInfo
-		$pkgmk $owner $group $rmDirDefault $status $request $request_location
-		$preinstall $postinstall $name $package @bits $cwd $tarball $rmDir
-		$count $requestName $preInstallLocation $preinstall_name pkgNamePrefix
-		$postinstall_location $postinstall_name $user $timestamp $tstamp $homeDir
+		$pkgEmail $pkgVendor $pkgDescription $temp $badPerms $pkgName $tar $pkgInfo
+		$pkgMk $group $rmBaseDirDefault $status $request $request_location
+		$preinstall $postinstall $name $package @bits $cwd $tarball $rmBuildDir
+		$count $requestName $preInstallLocation $preInstallName $pkgNamePrefix
+		$postInstallLocation $postInstallName $user $timestamp $tstamp $homeDir
 );
 
 $USAGE="
 $0 <tarball>
+";
 
-** Default answers are in brackets []
-\n";
-
-$tarball=shift || die "$USAGE";
+$tarball=shift || die "$USAGE\n";
 open(my $TARFILE, "<$tarball") || die "Could not open $tarball\n$!\n";
 my $tar_check=readline $TARFILE;
 if ($tar_check !~ /ustar/) {
@@ -29,7 +29,12 @@ if ($tar_check !~ /ustar/) {
 }
 close($TARFILE);
 
-print "\n";
+print "What should this package name be prefix with? eg:
+CHRISopenssl
+
+This would represent an openssl package that has the prefix of 'CHRIS'
+";
+
 my $pkgsize=0;
 if (-f "/usr/local/bin/tar") {
   my $tar="/usr/local/bin/tar";
@@ -43,11 +48,9 @@ $pkgName=~s/^.*\///g;
 $pkgName=~s/\.tar//g;
 $pkgName=~s/^.*\/(.*?)[-|_].*$/$pkgNamePrefix$1/g;
 $pkgName=~s/[-|_]//g;
-$pkgInfo="pkgInfo";
-$pkgmk="/usr/sbin/pkgmk";
-$owner="root";
-$group="bin";
-$rmDirDefault="y";
+$pkgInfo="pkginfo";
+$pkgMk="/usr/sbin/pkgmk";
+$rmBaseDirDefault="y";
 
 $status="no";
 while ($status ne "yes") {
@@ -82,8 +85,8 @@ while ($status ne "yes") {
   } elsif ($preinstall eq "y") {
     print "Where is your preinstall script?: ";
     chomp($preInstallLocation=<STDIN>);
-    $preinstall_name=system("basename $preInstallLocation > /dev/null");
-    chomp($preinstall_name);
+    $preInstallName=system("basename $preInstallLocation > /dev/null");
+    chomp($preInstallName);
     if (!-e $preInstallLocation) {
       print "$preInstallLocation does not exist!\n";
     } else {
@@ -104,11 +107,11 @@ while ($status ne "yes") {
     print "Your answer must be a \"y\" or an \"n\"!\n";
   } elsif ($postinstall eq "y") {
     print "Where is your postinstall script?: ";
-    chomp($postinstall_location=<STDIN>);
-    $postinstall_name=system("basename $postinstall_location > /dev/null");
-    chomp($postinstall_name);
-    if (!-e $postinstall_location) {
-      print "$postinstall_location does not exist!\n";
+    chomp($postInstallLocation=<STDIN>);
+    $postInstallName=system("basename $postInstallLocation > /dev/null");
+    chomp($postInstallName);
+    if (!-e $postInstallLocation) {
+      print "$postInstallLocation does not exist!\n";
     } else {
       $status="yes";
     }
@@ -153,7 +156,7 @@ if (!-d $baseDir) {
 print "Temporary build directory is $baseDir\n";
 $cwd=getcwd();
 chdir $baseDir || warn "The temporary build directory \"$baseDir\" could not be made.\n$!\n";
-$untarStatus=system($tar xf $tarball);
+$untarStatus=system("$tar xf $tarball");
 
 #PKG="BPFDmyf"
 #NAME="prog"
@@ -165,10 +168,10 @@ $untarStatus=system($tar xf $tarball);
 #PSTAMP="Henry Rollins"
 #BASEDIR="/"
 #CLASSES="none"
-while ($pkg_desc eq "") {
+while ($pkgDescription eq "") {
   print "Please enter a description of what $pkgName is for.\n";
-  chomp($pkg_desc=<STDIN>);
-  if ($pkg_desc eq "") {
+  chomp($pkgDescription=<STDIN>);
+  if ($pkgDescription eq "") {
     print "$pkgName needs a description! Try again.\n";
   }
 }
@@ -230,12 +233,11 @@ if ($preinstall eq "y") {
   print PROTOTYPE "i preinstall=$preInstallLocation\n";
 }
 if ($postinstall eq "y") {
-  system("cp $postinstall_location $baseDir");
-  print PROTOTYPE "i postinstall=$postinstall_location\n";
+  system("cp $postInstallLocation $baseDir");
+  print PROTOTYPE "i postinstall=$postInstallLocation\n";
 }
 while (<TMP>) {
   if ($_ !~ /^s|^l/) {
-#    $_=~s/[^ ]* [^ ]*$/$owner $group\n/g;
     if ($_ !~ "/^.*prototype.*$/" || $_ !~ "/^.*pkgInfo.*$/") {
       print PROTOTYPE "$_";
     }
@@ -254,7 +256,7 @@ close PROTOTYPE;
 open(PKGINFO, ">$baseDir/$pkgInfo");
 print PKGINFO "
 PKG='$pkgName'
-NAME='$pkg_desc'
+NAME='$pkgDescription'
 ARCH='sparc'
 VERSION='$pkgVersion'
 CATEGORY='application'
@@ -297,12 +299,12 @@ printf("$package is %.2f%s.\n", $size, $bits["$count"]);
 
 chdir $cwd;
 print "\nShould I remove the build directory $baseDir ? (y|n) [y] :";
-chomp($rmDir=<STDIN>);
-if ($rmDir ne "") {
-  $rmDir = $rmDirDefault;
+chomp($rmBuildDir=<STDIN>);
+if ($rmBuildDir ne "") {
+  $rmBuildDir = $rmBaseDirDefault;
 }
 # Have to use a true operator on the next line because of the shell return code.
-if ($rmDir ne "n") {
+if ($rmBuildDir ne "n") {
   system("rm -fr $baseDir") && print "$baseDir not deleted\n$!\n";;
 }
 print "\n";
