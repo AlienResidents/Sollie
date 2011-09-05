@@ -1,0 +1,308 @@
+#!/usr/bin/perl
+
+use Cwd;
+use strict;
+use warnings;
+
+$|=1;
+
+use vars qw($USAGE $basedir $untar_status $pkg_version $pkg_maintainer
+		$pkg_email $pkg_vendor $pkg_desc $temp $bad_perms $pkg_name $tar $pkginfo
+		$pkgmk $owner $group $rmdir $status $request $request_location
+		$preinstall $postinstall $name $package @bits $cwd $tarball $rm_dir
+		$count $request_name $preinstall_location $preinstall_name
+		$postinstall_location $postinstall_name $user $timestamp $tstamp $homedir
+);
+
+$USAGE="
+$0 <tarball>
+
+** Default answers are in brackets []
+\n";
+
+$tarball=shift || die "$USAGE";
+open(my $TARFILE, "<$tarball") || die "Could not open $tarball\n$!\n";
+my $tar_check=readline $TARFILE;
+if ("$tar_check" !~ /ustar/) {
+  close($TARFILE);
+  die "This is not a tarball!!\n";
+}
+close($TARFILE);
+
+print "\n";
+my $pkgsize=0;
+if (-f "/usr/local/bin/tar") {
+  my $tar="/usr/local/bin/tar";
+} elsif (-f "/usr/sfw/bin/gtar") {
+  my $tar="/usr/sfw/bin/gtar";
+} else {
+  my $tar="/usr/bin/tar";
+}
+$pkg_name="$tarball";
+$pkg_name=~s/^.*\///g;
+$pkg_name=~s/\.tar//g;
+$pkg_name=~s/^.*\/(.*?)[-|_].*$/BPFD$1/g;
+$pkg_name=~s/[-|_]//g;
+$pkginfo="pkginfo";
+$pkgmk="/usr/sbin/pkgmk";
+$owner="root";
+$group="bin";
+$rmdir="y";
+
+$status="no";
+while ("$status" ne "yes") {
+  print "Do you have a request script? (y|n) [n]\t: ";
+  chomp($request=<STDIN>);
+  $request=~lc($request);
+  if ("$request" ne "y" && "$request" ne "n" && "$request" ne "") {
+    print "Your answer must be a \"y\" or an \"n\"!\n";
+  } elsif ("$request" eq "y") {
+    print "Where is your request script?: ";
+    chomp($request_location=<STDIN>);
+    $request_name=system("basename $request_location > /dev/null");
+    chomp($request_name);
+    if (!-e $request_location) {
+      print "$request_location does not exist!\n";
+    } else {
+      $status="yes";
+    }
+  } elsif ("$request" eq "" || "$request" eq "n") {
+    $request="n";
+    $status="yes";
+  }
+}
+
+$status="no";
+while ("$status" ne "yes") {
+  print "Do you have a preinstall script? (y|n) [n]\t: ";
+  chomp($preinstall=<STDIN>);
+  $preinstall=~lc($preinstall);
+  if ("$preinstall" ne "y" && "$preinstall" ne "n" && $preinstall ne "") {
+    print "Your answer must be a \"y\" or an \"n\"!\n";
+  } elsif ("$preinstall" eq "y") {
+    print "Where is your preinstall script?: ";
+    chomp($preinstall_location=<STDIN>);
+    $preinstall_name=system("basename $preinstall_location > /dev/null");
+    chomp($preinstall_name);
+    if (!-e $preinstall_location) {
+      print "$preinstall_location does not exist!\n";
+    } else {
+      $status="yes";
+    }
+  } elsif ("$preinstall" eq "" || "$preinstall" eq "n") {
+    $preinstall="n";
+    $status="yes";
+  }
+}
+
+$status="no";
+while ("$status" ne "yes") {
+  print "Do you have a postinstall script? (y|n) [n]\t: ";
+  chomp($postinstall=<STDIN>);
+  $postinstall=~lc($postinstall);
+  if ("$postinstall" ne "y" && "$postinstall" ne "n" && "$postinstall" ne "") {
+    print "Your answer must be a \"y\" or an \"n\"!\n";
+  } elsif ("$postinstall" eq "y") {
+    print "Where is your postinstall script?: ";
+    chomp($postinstall_location=<STDIN>);
+    $postinstall_name=system("basename $postinstall_location > /dev/null");
+    chomp($postinstall_name);
+    if (!-e $postinstall_location) {
+      print "$postinstall_location does not exist!\n";
+    } else {
+      $status="yes";
+    }
+  } elsif ("$postinstall" eq "" || "$postinstall" eq "n") {
+    $postinstall="n";
+    $status="yes";
+  }
+}
+
+$status="no";
+while ("$status" ne "yes") {
+  print "What is the name of your package? [$pkg_name]\t: ";
+  chomp($name=<STDIN>);
+  if ("$name" ne "") {
+    $pkg_name=$name;
+  }
+  if ("$name" =~ /[_|-]/) {
+    print "Your package name can NOT have underscores or hyphens! Try again.\n";
+  } else {
+    $status="yes";
+  }
+}
+
+print "\n";
+print "Please ensure that all permissions on your files in\n";
+print "\"$tarball\" are correct.\n";
+print "Press enter once this has been verified.\n";
+chomp($temp=<STDIN>);
+
+$user = getpwuid("$<");
+$group = getgrgid("$)");
+
+$homedir="$ENV{HOME}";
+$basedir="$homedir/$pkg_name";
+if (!-d $basedir) {
+  mkdir $basedir;
+} elsif (-d $basedir) {
+  system("mv $basedir $basedir.`date '+%a-%b-%e-%T-%Z-%Y'`");
+  mkdir $basedir
+}
+
+print "Temporary build directory is $basedir\n";
+$cwd=getcwd();
+chdir $basedir || warn "The temporary build directory \"$basedir\" could not be made.\n$!\n";
+$untar_status=system("$tar xf $tarball");
+
+#PKG="BPFDmyf"
+#NAME="prog"
+#ARCH="sparc"
+#VERSION="1.2.3-4"
+#CATEGORY="application"
+#VENDOR="The Packaging Plan"
+#EMAIL="Packager@packaging.plant.com"
+#PSTAMP="Henry Rollins"
+#BASEDIR="/"
+#CLASSES="none"
+while ("$pkg_desc" eq "") {
+  print "Please enter a description of what $pkg_name is for.\n";
+  chomp($pkg_desc=<STDIN>);
+  if ("$pkg_desc" eq "") {
+    print "$pkg_name needs a description! Try again.\n";
+  }
+}
+
+while ("$pkg_version" eq "") {
+  print "What version is $pkg_name?\n";
+  chomp($pkg_version=<STDIN>);
+  if ("$pkg_version" eq "") {
+    print "$pkg_name must have a version! Try again.\n";
+  }
+}
+
+while ("$pkg_maintainer" eq "") {
+  print "Who is the person responsible for maintaining this package?\n";
+  chomp($pkg_maintainer=<STDIN>);
+  if ("$pkg_maintainer" eq "") {
+    print "Someone has to be responsible for $pkg_name ! Try again.\n";
+  }
+}
+
+while ("$pkg_email" eq "") {
+  print "What is ${pkg_maintainer}'s email address?\n";
+  chomp($pkg_email=<STDIN>);
+  if ("$pkg_maintainer" eq "") {
+    print "$pkg_maintainer has to have an email address ! Try again.\n";
+  }
+}
+
+$bad_perms=system("find $basedir -type f -perm -2 > $homedir/$pkg_name.bad_perms");
+$bad_perms.=system("find $basedir -type d -perm -2 > $homedir/$pkg_name.bad_perms");
+if (-s "$homedir/$pkg_name.bad_perms") {
+  print "\nThe following list of files have bad permissions.\n";
+  print "The permissions for other(world) cannot be a value of 7,6, or 2.\n";
+  print "Please fix your file permissions in $tarball and then try again.\n";
+  system("find $basedir -type f -perm -2 -exec ls -l {} \\;");
+  unlink "$homedir/$pkg_name.bad_perms";
+  exit;
+} else {
+  unlink "$homedir/$pkg_name.bad_perms";
+}
+
+if (-d "$homedir/tmp") {
+  #system("find . -type +d -o -type l | pkgproto > $homedir/tmp/tmp");
+  system("find . | pkgproto > $homedir/tmp/tmp");
+  open(TMP, "<$homedir/tmp/tmp");
+} else {
+  #system("find . -type +d -o -type l | pkgproto > $homedir/tmp");
+  system("find . | pkgproto > $homedir/tmp");
+  open(TMP, "<$homedir/tmp");
+}
+open(PROTOTYPE, ">$basedir/prototype");
+print PROTOTYPE "i pkginfo=./$pkginfo\n";
+if ("$request" eq "y") {
+  system("cp $request_location $basedir");
+  print PROTOTYPE "i request=$request_location\n";
+}
+if ("$preinstall" eq "y") {
+  system("cp $preinstall_location $basedir");
+  print PROTOTYPE "i preinstall=$preinstall_location\n";
+}
+if ("$postinstall" eq "y") {
+  system("cp $postinstall_location $basedir");
+  print PROTOTYPE "i postinstall=$postinstall_location\n";
+}
+while (<TMP>) {
+  if ("$_" !~ /^s|^l/) {
+#    $_=~s/[^ ]* [^ ]*$/$owner $group\n/g;
+    if ("$_" !~ "/^.*prototype.*$/" || "$_" !~ "/^.*pkginfo.*$/") {
+      print PROTOTYPE "$_";
+    }
+  } else {
+    print PROTOTYPE "$_";
+  }
+}
+close TMP;
+if (-d "$homedir/tmp") {
+  unlink "$homedir/tmp/tmp";
+} else {
+  unlink "$homedir/tmp";
+}
+close PROTOTYPE;
+
+open(PKGINFO, ">$basedir/$pkginfo");
+print PKGINFO "
+PKG='$pkg_name'
+NAME='$pkg_desc'
+ARCH='sparc'
+VERSION='$pkg_version'
+CATEGORY='application'
+VENDOR='$pkg_vendor'
+EMAIL='$pkg_email'
+PSTAMP='$pkg_maintainer'
+BASEDIR='/'
+CLASSES='none'
+";
+close PKGINFO;
+
+print "Making $pkg_name now...\n";
+$status=system("pkgmk -d $basedir -r $basedir");
+if ("$status" != "0") {
+  print "The creation of $pkg_name failed.\n";
+  exit;
+}
+
+print "Translating package to data stream format...\n";
+my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
+$year+=1900;
+$mon+=1;
+$timestamp="$year$mon$mday$hour$min";
+print "What is the timestamp? [$timestamp]\n";
+chomp($tstamp=<STDIN>);
+if ("$tstamp" ne "") {
+  $timestamp=$tstamp;
+}
+$package="$homedir/$pkg_name-sparc-sol9-v$pkg_version-$timestamp.pkg";
+system("pkgtrans -s $basedir $package $pkg_name");
+my $size = (lstat("$package"))[7];
+$count=0;
+while ("$size" >= "1000") {
+  $count++;
+  $size=$size/1000;
+}
+@bits=("Bytes", "KB", "MB", "GB");
+
+printf("$package is %.2f%s.\n", $size, $bits["$count"]);
+
+chdir $cwd;
+print "\nShould I remove the build directory $basedir ? (y|n) [y] :";
+chomp($rm_dir=<STDIN>);
+if ("$rm_dir" ne "") {
+  $rmdir=$rm_dir;
+}
+# Have to use a true operator on the next line because of the shell return code.
+if ("$rmdir" ne "n") {
+  system("rm -fr $basedir") && print "$basedir not deleted\n$!\n";;
+}
+print "\n";
