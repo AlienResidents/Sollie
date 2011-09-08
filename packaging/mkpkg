@@ -195,6 +195,7 @@ $pkg{version} = getInfo('version', 'i');
 $pkg{maintainer} = getInfo('maintainer', 's');
 $pkg{email} = getInfo('contact email', 'e');
 $pkg{vendor} = getInfo('vendor', 's');
+$pkg{basedir} = getInfo('base directory', 's');
 
 $badPerms = system("find $baseBuildDir -type f -perm -2 > $homeDir/$pkg{name}.badPerms");
 $badPerms .= system("find $baseBuildDir -type d -perm -2 > $homeDir/$pkg{name}.badPerms");
@@ -259,7 +260,7 @@ CATEGORY='application'
 VENDOR='$pkg{vendor}'
 EMAIL='$pkg{email}'
 PSTAMP='$pkg{maintainer}'
-BASEDIR='/'
+BASEDIR='$pkg{basedir}'
 CLASSES='none'
 ";
 close $PKGINFO;
