@@ -127,8 +127,9 @@ if (-f $arg) {
   $tar{dir} = $arg;
   $tar{file} = "$baseDir/" . basename($tar{dir}) . ".tar.gz";
   $pkg{name} = basename($tar{dir});
-} else {
-  print "$arg here\n";
+  print "$pkg{name}\n";
+} elsif (!-f $arg && !-d $arg) {
+  die "$arg doesn't exist.\n";
 }
 $pkg{name} =~ s/-.*$//g;
 $baseBuildDir = "$baseDir/$pkg{name}";
@@ -143,6 +144,8 @@ if ($tar{method} eq 'tardir') {
   chdir "../" || die "Can't change to '../'.\n$!\n";;
   my @files = dirwalk(basename($tar{dir}));
   system("tar -czf $tar{file} @files");
+} elsif ($tar{method} eq 'tarfile') {
+  chdir dirname($tar{file});
 }
 
 print "What should the package name prefix be (no spaces)? eg:
