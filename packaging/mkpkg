@@ -4,6 +4,8 @@ use Cwd;
 use strict;
 use warnings;
 use File::Basename;
+use File::Compare;
+use File::Copy;
 use File::Path;
 use Data::Dumper;
 
@@ -111,7 +113,7 @@ $rm{basebuilddir} = 1;
 $homeDir = "$ENV{HOME}";
 $baseDir = "$homeDir/mkpkg";
 if ($rm{basedir} == 1 && -d $baseDir) {
-  print "* Removing $baseDir\n";
+  print "* Removing an existing \$baseDir: $baseDir\n";
   rmtree($baseDir) || die "Can't remove $baseDir\n$!\n";
 }
 
@@ -122,19 +124,22 @@ if (-f $arg) {
   $tar{file} = $arg;
   $tar{method} = "tarball";
   $pkg{name} = basename($tar{file});
+  if (compare($tar{file}, "$baseDir/" . basename($tar{file})) != 0) {
+    copy($tar{file}, "$baseDir/",) or die "Copy failed:\n$!\n";
+  }
+  $tar{file} = "$baseDir/" . basename($tar{file});
 } elsif (-d $arg) {
   $tar{method} = "tardir";
   $tar{dir} = $arg;
   $tar{file} = "$baseDir/" . basename($tar{dir}) . ".tar.gz";
   $pkg{name} = basename($tar{dir});
-  print "$pkg{name}\n";
 } elsif (!-f $arg && !-d $arg) {
   die "$arg doesn't exist.\n";
 }
 $pkg{name} =~ s/-.*$//g;
 $baseBuildDir = "$baseDir/$pkg{name}";
 if (-d $baseBuildDir && $rm{basebuilddir} == 1) {
-  print "* Removing $baseBuildDir\n";
+  print "* Removing an existing (old) \$baseBuildDir: $baseBuildDir\n";
   rmtree($baseBuildDir) || die "Can't remove $baseBuildDir\n$!\n";
 }
 mkpath $baseBuildDir or die "The temporary build directory \"$baseBuildDir\" could not be made.\n$!\n";
@@ -149,8 +154,8 @@ if ($tar{method} eq 'tardir') {
 }
 
 print "What should the package name prefix be (no spaces)? eg:
-CHRISopenssl
-This would represent an openssl package that has the prefix of 'CHRIS'
+ALIENopenssl
+This would represent an openssl package that has the prefix of 'ALIEN'
 ";
 chomp($pkg{prefix} = uc(<STDIN>));
 if ($pkg{prefix} =~ m/[^A-z|^0-9]/) {
@@ -270,7 +275,13 @@ print "Translating package to data stream format...\n";
 my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
 $year += 1900;
 $mon += 1;
-$timestamp = "$year-$mon-$mday";
+if (length($mon) == 1) {
+  $mon = "0$mon"
+}
+if (length($mday) == 1) {
+  $mday = "0$mday"
+}
+$timestamp = "$year$mon$mday";
 print "What is the timestamp? [$timestamp]\n";
 chomp($tstamp = <STDIN>);
 if ($tstamp ne "") {
@@ -288,5 +299,4 @@ while ($size >= $siUnits) {
 
 printf("$package is %.2f%s.\n", $size, $bits["$count"]);
 
-#chdir $cwd;
 print "\n";
