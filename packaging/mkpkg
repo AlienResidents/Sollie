@@ -1,4 +1,9 @@
 #!/usr/local/bin/perl
+#
+#
+# vim: set expandtab, set tabstop=2, set foldmethod=marker
+#
+#
 
 use Cwd;
 use strict;
@@ -107,7 +112,7 @@ sub getInfo { #{{{
 $siUnits = 1000;
 $pkg{info} = "pkginfo";
 $pkg{make} = "/usr/sbin/pkgmk";
-chomp($pkg{arch} = qx/uname -p/);
+chomp($pkg{osver} = qx/uname -r/);
 $rm{basedir} = 0;
 $rm{basebuilddir} = 1;
 $homeDir = "$ENV{HOME}";
@@ -196,6 +201,7 @@ $pkg{maintainer} = getInfo('maintainer', 's');
 $pkg{email} = getInfo('contact email', 'e');
 $pkg{vendor} = getInfo('vendor', 's');
 $pkg{basedir} = getInfo('base directory', 's');
+#$pkg{arch} = getInfo('architecture', 's');
 
 $badPerms = system("find $baseBuildDir -type f -perm -2 > $homeDir/$pkg{name}.badPerms");
 $badPerms .= system("find $baseBuildDir -type d -perm -2 > $homeDir/$pkg{name}.badPerms");
@@ -251,10 +257,10 @@ if (-d "$homeDir/tmp") {
 }
 close PROTOTYPE;
 
+#ARCH='$pkg{arch}'
 open(my $PKGINFO, ">$baseBuildDir/$pkg{info}");
 print $PKGINFO "PKG='$pkg{name}'
 NAME='$pkg{description}'
-ARCH='$pkg{arch}'
 VERSION='$pkg{version}'
 CATEGORY='application'
 VENDOR='$pkg{vendor}'
@@ -288,7 +294,7 @@ chomp($tstamp = <STDIN>);
 if ($tstamp ne "") {
   $timestamp = $tstamp;
 }
-$package = "$baseDir/$pkg{name}-sparc-sol9-v$pkg{version}-$timestamp.pkg";
+$package = "$baseDir/$pkg{name}-$pkg{arch}-sol$pkg{osver}-v$pkg{version}-$timestamp.pkg";
 system("pkgtrans -s $baseBuildDir $package $pkg{name}");
 $size = (lstat($package))[7];
 $count = 0;
