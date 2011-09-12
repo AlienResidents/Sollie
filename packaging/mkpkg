@@ -21,8 +21,8 @@ $|=1;
 use vars qw(%request %preInstall %postInstall %pkg %tar %rm @bits $USAGE
   $baseDir $baseBuildDir $untarStatus $temp $badPerms $group $status $request
   $requestLocation $tar $preinstall $postinstall $name $package $cwd $rmBuildDir
-  $user $count $requestName $preInstallLocation $preInstallName $arg $size
-  $postInstallLocation $postInstallName $timestamp $tstamp $homeDir $siUnits
+  $user $count $requestName $arg $size $timestamp $tstamp $homeDir $siUnits
+  $startDir
 );
 
 $USAGE = "
@@ -64,6 +64,10 @@ sub getScript { # {{{
     } elsif ($hasScript eq "y") {
       print "What is the path to your $type script?: ";
       chomp($scriptLocation = <STDIN>);
+      # Alter the $scriptLocation is not an absolute path
+      if ($scriptLocation !~ m/^\//) {
+        $scriptLocation = "$startDir/$scriptLocation";
+      }
       $scriptName = basename($scriptLocation);
       chomp($scriptName);
       if (!-e $scriptLocation) {
@@ -109,9 +113,11 @@ sub getInfo { #{{{
   return $info;
 } #}}}
 
+$startDir = getcwd();
 $siUnits = 1000;
 $pkg{info} = "pkginfo";
 $pkg{make} = "/usr/sbin/pkgmk";
+chomp($pkg{arch} = qx/uname -p/);
 chomp($pkg{osver} = qx/uname -r/);
 $rm{basedir} = 0;
 $rm{basebuilddir} = 1;
@@ -201,7 +207,6 @@ $pkg{maintainer} = getInfo('maintainer', 's');
 $pkg{email} = getInfo('contact email', 'e');
 $pkg{vendor} = getInfo('vendor', 's');
 $pkg{basedir} = getInfo('base directory', 's');
-#$pkg{arch} = getInfo('architecture', 's');
 
 $badPerms = system("find $baseBuildDir -type f -perm -2 > $homeDir/$pkg{name}.badPerms");
 $badPerms .= system("find $baseBuildDir -type d -perm -2 > $homeDir/$pkg{name}.badPerms");
@@ -229,15 +234,15 @@ open(PROTOTYPE, ">$baseBuildDir/prototype");
 print PROTOTYPE "i pkginfo=$pkg{info}\n";
 if ($request{name}) {
   system("cp $request{location} $baseBuildDir");
-  print PROTOTYPE "i request = $request{location}\n";
+  print PROTOTYPE "i request=$request{location}\n";
 }
 if ($preInstall{name}) {
   system("cp $preInstall{location} $baseBuildDir");
-  print PROTOTYPE "i preInstall = $preInstall{location}\n";
+  print PROTOTYPE "i preinstall=$preInstall{location}\n";
 }
 if ($postInstall{name}) {
   system("cp $postInstall{location} $baseBuildDir");
-  print PROTOTYPE "i postInstall = $postInstall{location}\n";
+  print PROTOTYPE "i postinstall=$postInstall{location}\n";
 }
 while (<TMP>) {
   if ($_ !~ /^s|^l/) {
