@@ -1,5 +1,5 @@
-bldcat:
-  I use the pkg-get / pkgutil tool from Blastwave / CSW to remotely install packages from a custom repo (I don't normally use their repo).  This is a modified version of the catalog create script that some dude wrote (says so at the top of the file).
+'''bldcat'''
+* I use the pkg-get / pkgutil tool from Blastwave / CSW to remotely install packages from a custom repo (I don't normally use their repo).  This is a modified version of the catalog create script that some dude wrote (says so at the top of the file).
 
-mkpkg:
-  This is used to, you guessed it, roll a solaris package from a directory, or tarball.  I'm sure it could be expanded to create from zip files, but fuck it for now, I use tar, and so should you.  It doesn't create a complete package as far as all the little scripts that some people want / require.  I don't need anything more than a request script (of which at install time, I can feed in an answer file), preinstall script, postinstall script.  Everything else is useless to me right now.  i don't see that changing.
+'''mkpkg'''
+* This is used to, you guessed it, roll a solaris package from a directory, or tarball.  I'm sure it could be expanded to create from zip files, but fuck it for now, I use tar, and so should you.  It doesn't create a complete package as far as all the little scripts that some people want / require.  I don't need anything more than a request script (of which at install time, I can feed in an answer file), preinstall script, postinstall script.  Everything else is useless to me right now.  i don't see that changing.
