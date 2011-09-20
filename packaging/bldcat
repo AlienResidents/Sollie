@@ -1,0 +1,255 @@
+#!/usr/bin/perl
+#
+#
+#
+#
+#!/opt/csw/bin/perl -w
+
+# bldcat - build a CSW catalog from packages in a directory
+# First Altered: Chris Donovan 2011-09-20
+# Original copy by: Peter Bonivart
+# $Id: bldcat 40 2009-05-04 12:43:19Z bonivart $
+
+use strict;
+use warnings;
+use Digest::MD5;
+use File::Path;
+
+$| = 1;
+my $tmpdir = "/tmp/bldcat.$$.$^T";
+my ($deptmp,$status,$pkgname, @pkgdirs);
+my ($description,$common,$version,$package,$pkgfile,$hash,$size,$deps,$category);
+my %oldcatalog;
+my %olddescriptions;
+my $USAGE = "
+$0 <packages directory> [dir2] [dir3] ... [dirN]
+";
+@pkgdirs = @ARGV;
+
+if (scalar(@pkgdirs) < 1) {
+  print STDERR "$USAGE\n";
+  exit 1;
+}
+
+
+
+foreach my $pkgdir (@pkgdirs) {
+  open(CATALOG_NEW,'>', "$pkgdir/catalog.new") || die "Could not write new catalog at $pkgdir/catalog.new: $!";
+  open(DESCRIPTIONS_NEW,'>', "$pkgdir/descriptions.new") || die "Could not write new descriptions at $pkgdir/descriptions.new: $!";
+  open(CATALOG,'<', "$pkgdir/catalog.new") || die "Could not write new catalog at $pkgdir/catalog.new: $!";
+  open(DESCRIPTIONS,'<', "$pkgdir/descriptions.new") || die "Could not write new descriptions at $pkgdir/descriptions.new: $!";
+  if (<CATALOG>) {
+    while (<CATALOG>) {
+      chomp;
+      if (! $_) {
+        next;
+      }
+      my @line = split /\s+/;
+      my $hash = $line[4];
+      $oldcatalog{$hash} = \@line;
+    }
+  }
+
+  if (<DESCRIPTIONS>) {
+    while (<DESCRIPTIONS>) {
+      chomp;
+      if (! $_) {
+        next;
+      }
+      my @line = split /\s+/;
+      my $common = $line[0];
+      $olddescriptions{$common} = $_;
+    }
+  }
+  $pkgdir =~ s/\/$//;
+  foreach my $file (glob "$pkgdir/*") {
+    my $isPkg = qx/file $file/;
+    ($common,$version,$package,$pkgfile,$hash,$size,$deps,$category) = ("","","","","","","","");
+    next unless (-r $file);    # must be a readable file
+    next unless ($isPkg =~ /pkg Datastream/);  # must look like a package
+
+    # Calculate hash before we do anything else to look up the cache
+    if (! $hash) {
+      open (FILE2,"<$file") || die "Could not open $file: $!\n";
+      binmode (FILE2);
+      $hash = Digest::MD5->new->addfile(*FILE2)->hexdigest;
+      close FILE2;
+    }
+
+    if (exists $oldcatalog{$hash} && exists $olddescriptions{$oldcatalog{$hash}[0]}) {
+      print "Reusing old information for $file\n";
+      print CATALOG_NEW join(' ', @{$oldcatalog{$hash}}), "\n";
+      print DESCRIPTIONS_NEW $olddescriptions{$oldcatalog{$hash}[0]}, "\n";
+      next;
+    }
+
+    print "Inspecting $file\n";
+
+    # unpack package
+    if (! -d "$tmpdir") {
+      mkpath $tmpdir || die "Could not create directory $tmpdir: $!\n";
+    }
+
+    my $gzipped = 0;
+    ($file =~ /\.gz$/ ? qx/\/bin\/gzip -d $file/ : ()) and $gzipped = 1;
+    open(DECOMPRESSED, '<', $file) or die "Can't open $file:\n$!\n";
+    $file =~ s/\.gz//;
+    my $count = 0;
+    my $pkginfo = "";
+    my $line;
+    my $in = 0;
+    while ($line = <DECOMPRESSED>) {
+      if ($line =~ m/pkginfo/) {
+        $in = 1;
+      } elsif ($count == 1) {
+        chomp($line);
+        $pkgname = $line;
+        $pkgname =~ s/ .*$//g;
+      } elsif ($in == 1 && $line =~ m/[0-9|a-f]{110,}/) {
+        last;
+      } elsif ($in == 1) {
+        $pkginfo .= $line;
+      }
+      $count++;
+    }
+    close(DECOMPRESSED);
+    if ($gzipped == 1) {
+      qx/gzip $file/;
+    }
+    if (! -d "$tmpdir/$pkgname") {
+      mkpath "$tmpdir/$pkgname" || die "Could not create directory $tmpdir/$pkgname: $!\n";
+    }
+    open(PKGINFO, '>', "$tmpdir/$pkgname/pkginfo") or die "Can't open $tmpdir/$pkgname/pkginfo:\n$!\n";
+      print PKGINFO $pkginfo;
+    close(PKGINFO);
+
+    open (FILE, '<', "$tmpdir/$pkgname/pkginfo") || die "Could not open $tmpdir/$pkgname/pkginfo: $!";
+
+    while ($line = <FILE>) {
+      chomp $line;
+      # field 1: common name
+      if ($line =~ /^NAME=/) {
+        $common = $line;
+        $common =~ s/^[A-Z]+=//;
+        next;
+      }
+
+      # field 2: version
+      if ($line =~ /^VERSION=/) {
+        ($version) = ($line =~ /=(.+)$/);
+        next;
+      }
+
+      # field 3: package name
+      if ($line =~ /^PKG=/) {
+        ($package) = ($line =~ /=(.+)$/);
+        next;
+      }
+
+      # field 4: filename
+      if (! $pkgfile) {
+        ($pkgfile) = ($file =~ /\//) ? ($file =~ /\/(.+)$/) : ($file);
+      }
+
+      # field 5: md5 hash
+      # Already computed
+
+      # field 6: file size
+      if (! $size) {
+        $size = (stat($file))[7];
+      }
+
+      # field 8: categories
+      if ($line =~ /^CSW_CATEGORY=/) {
+        ($category) = ($line =~ /=(.+)$/);
+        $category = join('|',split(/,\s?/,$category));
+        next;
+      }
+    }
+    close FILE;
+
+    # field 7: dependencies
+    $deps = "";
+    if (-r "$tmpdir/$pkgname/install/depend") {
+      open (FILE,'<', "$tmpdir/$pkgname/install/depend") or die "Can't open $tmpdir/$pkgname/install/depend:\n$!\n";
+      while (<FILE>) {
+        chomp;
+        if (/^P\s+CSW/) {
+          ($deptmp) = (/P\s+(\S+)/);
+          if ($deptmp ne $pkgname) {  # skip if circular
+            $deps = ($deps) ? "$deps|$deptmp" : $deptmp;
+          }
+        }
+      }
+      close FILE;
+    }
+
+    # clean up
+    $status = system("/bin/rm -rf $tmpdir");
+    die "Could not delete files in $tmpdir: $!" if $status;
+
+    $deps = "none" unless $deps;
+    $category = "none" unless $category;
+    print CATALOG_NEW "$common $version $package $pkgfile $hash $size $deps $category\n";
+  }
+  close CATALOG;
+  unlink "$pkgdir/descriptions";      # May or may not be there
+  link "$pkgdir/descriptions.new", "$pkgdir/descriptions" or die "Cannot link $pkgdir/descriptions.new to $pkgdir/descriptions: $!";
+  unlink "$pkgdir/descriptions.new" or die "Cannot unlink $pkgdir/descriptions.new: $!";
+
+  unlink "$pkgdir/catalog";      # May or may not be there
+  link "$pkgdir/catalog.new", "$pkgdir/catalog" or die "Cannot link $pkgdir/catalog.new to $pkgdir/catalog: $!";
+  unlink "$pkgdir/catalog.new" or die "Cannot unlink $pkgdir/catalog.new: $!";
+}
+
+
+exit 0;
+
+=head1 NAME
+
+bldcat - build a CSW catalog from packages in a directory.
+
+=head1 SYNOPSIS
+
+bldcat <catalog file>
+
+=head1 DESCRIPTION
+
+Build a CSW catalog from packages in a directory.
+
+=head1 EXAMPLES
+
+=head2 Example 1
+
+C<# bldcat catalog>
+
+Will build a catalog from packages in the current directory.
+
+=head1 SEE ALSO
+
+http://pkgutil.wikidot.com
+
+http://pkgutil.sourceforge.net
+
+=head1 AUTHOR
+
+Peter Bonivart <bonivart@blastwave.org>
+
+=head1 CREDITS
+
+Dagobert Michelsen
+
+Derek Whayman
+
+For more details, see the readme file.
+
+=head1 COPYRIGHT AND DISCLAIMER
+
+Copyright (C) 2008-2009 Peter Bonivart. This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program; if not, write to the Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
+
+=cut
+
