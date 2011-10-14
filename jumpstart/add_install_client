@@ -1,0 +1,2372 @@
+#!/bin/bash
+#
+#pragma ident	"@(#)add_install_client.sh	1.147	11/02/14 SMI"
+#
+#
+# Copyright (c) 1991, 2011, Oracle and/or its affiliates. All rights reserved.
+#
+# Sun considers its source code as an unpublished, proprietary trade secret,
+# and it is available only under strict license provisions.  This copyright
+# notice is placed here only to protect Sun in the event the source is
+# deemed a published work.  Dissassembly, decompilation, or other means of
+# reducing the object code to human readable form is prohibited by the
+# license agreement under which this code is provided to the user or company
+# in possession of this copy.
+#
+# RESTRICTED RIGHTS LEGEND: Use, duplication, or disclosure by the Government
+# is subject to restrictions as set forth in subparagraph (c)(1)(ii) of the
+# Rights in Technical Data and Computer Software clause at DFARS 52.227-7013
+# and in similar clauses in the FAR and NASA FAR Supplement.
+#
+
+
+#
+# Description:
+# 	Setup a server for SVR4 client to run install software
+#
+#	Clients are configured to boot using RARP or DHCP.  We can perform
+#	all of the configuration locally for RARP clients, but we can't for
+#	DHCP ones.  As such, we tell the user what to do on the DHCP server
+#	for DHCP clients.
+#
+# The CDROM has everything needed on the first partition, so there is
+# no need to create any partitions/hierachies on the server (besides /tftpboot).
+#
+# Files (maybe) changed on server:
+# /tftpboot/ - directory created/populated with inetboot and links.
+# /etc/ethers - if client Ethernet address isn't known AND not running NIS
+# /etc/exports || /etc/dfs/dfstab - adds/update export entry for install filesys
+# /etc/inetd.conf - to turn on tftpboot daemon
+# /etc/bootparams - adds entry for this client
+# /etc/hosts - if client IP address not already known to server
+
+# make sure path is ok
+export PATH=/bin:/usr/bin:/usr/sbin:/sbin:${PATH}
+
+# tr may fail in some locales. Hence set the env LANG=C and LC_ALL=C
+TR='env LC_ALL=C LANG=C tr'
+
+#
+# Constants
+#
+SIGHUP=1
+SIGINT=2
+SIGQUIT=3
+SIGTERM=15
+
+#
+# Variables
+#
+CLIENT_NAME=""
+CLIENT_TYPE="RARP"
+DHCP_CLIENT_ID=""
+DHCP_CLASS_NAME=""
+PGRP=""
+PLATFORM_NAME=""
+BOOT_METHOD=""
+TmpANS=/tmp/tmpans.$$
+
+# if the LOCKFILE string is changed it MUST also be
+# changed in rm_install_client
+#
+LOCKFILE=/tmp/.install_client.lck
+LOCKFILE_CREATED=
+
+# Settings for client specific x86 properties, to be passed via grub menu
+BARGLIST=""
+BOOT_ARGS=""
+
+# Functions:
+
+
+#
+# cleanup_and_exit
+#
+# Purpose : Get rid of temporary files and mount points and exit
+#
+# Arguments :
+#   exit code
+#
+cleanup_and_exit ()
+{
+    if [ -n "$Pkg_admin" -a -f "$Pkg_admin" ]; then
+        rm $Pkg_admin
+    fi
+    if [ -n "$Pkg_mnt" -a -d "$Pkg_mnt" ]; then
+        umount $Pkg_mnt 2> /dev/null
+        rm -fr $Pkg_mnt 2> /dev/null
+    fi
+    if [ -n "$LOCKFILE_CREATED" ] ; then
+        rm -f $LOCKFILE
+    fi
+
+    exit $1
+}
+
+#
+# usage
+#
+# Purpose : Print the usage message in the event the user
+#           has input illegal command line parameters and
+#           then exit
+#
+# Arguments :
+#   none
+#
+usage () {
+	echo -e "Usage: $0 [-i ipaddr] [-e ethernetid] [-s server:path]"
+	echo -e "\t\t[-c server:path] [-p server:path]"
+	echo -e "\t\t[-n [name_server]:name_service[(netmask)]]"
+	echo -e "\t\t[-t [server:]install boot image path |"
+	echo -e "\t\t-t server:[install boot image path] ]"
+	echo -e "\t\tclient_name platform_group"
+	echo
+	echo -e "DHCP clients:"
+	echo -e "\t$0 -d [-s server:path] [-c server:path]"
+	echo -e "\t\t[-p server:path] [-f boot file name]"
+	echo -e "\t\t[-t [server:]install boot image path |"
+	echo -e "\t\t-t server:[install boot image path] ]"
+	echo -e "\t\tplatform_name platform_group"
+	echo
+	echo -e "\t$0 -d -e ethernetid [-s server:path]"
+	echo -e "\t\t[-b \"property=value\"] (i86pc platform only)"
+	echo -e "\t\t[-c server:path] [-p server:path] [-f boot file name]"
+	echo -e "\t\t[-t [server:]install boot image path |"
+	echo -e "\t\t -t server:[install boot image path] ]"
+	echo -e "\t\tplatform_group"
+
+	cleanup_and_exit 1
+
+}
+
+#
+# Find the sources that the nsswitch.conf(4) file defines for the given database
+#
+# Takes a single argument, database.
+#
+#	e.g. - get_sources hosts
+#
+# Returns a list of sources on stdout
+#
+get_sources() {
+	egrep "^${1}:" /etc/nsswitch.conf 2>/dev/null | \
+	sed -e '/^$/d' \
+	    -e '/^#/d' \
+	    -e 's/.*://' \
+	    -e 's/\[.*return\].*$//' \
+	    -e 's/\[.*\].*$//' | \
+	awk '{ for(i=1; i <= NF; i++) { print $i } }'
+}
+
+#
+# Determine if the given database is served by the given source
+#
+# Takes two arguments, database, and service:
+#
+# 	e.g. - db_in_source hosts files
+#
+# Returns the status:
+#		0 - database in listed source.
+#		1 - database not in listed source.
+#
+db_in_source() {
+	echo `get_sources "${1}"` | grep "\<${2}\>" > /dev/null 2>&1
+	return $?
+}
+
+#
+# Lookup the given key in the specified database, returns data retrieved, plus
+# the source that returned it.
+#
+# Requires two arguments: database and key
+#
+# 	e.g. - lookup hosts binky
+#
+# above example will return data for binky and the source it was found in, if
+# it is found.
+#
+# Has two optional arguments: type_of_lookup and source
+#
+#	e.g. - lookup hosts 129.152.221.35 byaddr files
+#
+# above example will return data for host 129.152.221.35 using an address lookup
+# in files only.
+#
+lookup() {
+	D="${1}"
+	K="${2}"
+	T="${3}"
+	S="${4}"
+	ANS=""
+	status=1
+	if [ ! -z "${S}" ]; then
+		srcs="${S}"
+	else
+		srcs=`get_sources "${D}"`
+	fi
+
+	for i in ${srcs}; do
+	    SRC=${i}
+	    case "${i}" in
+		compat)
+		    ;;
+
+		dns)
+		    if [ "${HAVE_DNS}" -ne 0 ]; then
+			NS="DNS"
+			NS_NAME="domain name service"
+			# TODO: implement reverse lookups (byaddr lookups)
+			if [ "${D}" = "hosts" ] && [ "${T}" != "byaddr" ]; then
+			    ANS=`nslookup ${K} 2>&1`
+			    echo -e "${ANS}" | grep '^\*\*' >/dev/null
+			    if [ $? -eq 0 ]; then
+				ANS=
+			    else
+				status=0
+				ANS=`echo -e "${ANS}" | awk '
+				    $1 == "Name:" { n = $2 }
+				    $1 == "Address:" {
+					if (n != "") {
+						a=$2
+						if (substr(a, length(a), 1) == ",")
+							a=substr(a, 1, length(a)-1)
+						print a, n
+						exit(0)
+					}
+				    }'`
+				break
+			    fi
+			fi
+		    fi
+		    ;;
+
+		files)
+		    case "${D}" in
+			bootparams)
+			    dbfile=/etc/bootparams
+			    key="^\<${K}\>"
+			;;
+			ethers)
+			    dbfile=/etc/ethers
+			    key="^[ 	]*[^# 	].*\<${K}\>"
+			    [ "${T}" = "byaddr" ] && key="^\<${K}\>"
+			;;
+			hosts)
+			    dbfile=/etc/hosts
+			    key="^[ 	]*[^# 	].*\<${K}\>"
+			    [ "${T}" = "byaddr" ] && key="^\<${K}\>"
+			;;
+		    esac
+		    if [ -f "${dbfile}" ]; then
+		        NS="local"
+		        NS_NAME="file"
+
+			#
+			# Pattern used in grep matches all words equal to key and
+			# the words can be separated by whitespace, dots, commas,
+			# ... We want only exact matches - words separated by
+			# whitespaces or at the beginning or end of line. For
+			# example if we match "key", we don't want to match
+			# "key.domain" string. So we use awk script to take the
+			# last exact match.
+			#
+			ANS=`grep "$key" "$dbfile" 2>/dev/null | awk '
+			    BEGIN { result="" }
+			    {
+				for (n=1; n<=NF; n++)
+					{
+						if ($n == key) result=$0
+                                        	if ($n == "#") { break }
+					}
+			    }
+			    END { print result }' key="$K"`
+			if [ "$ANS" ]; then
+				status=0
+				break
+			fi
+		    fi
+		    ;;
+
+		nis)
+		    if [ "${HAVE_NIS}" -ne 0 ]; then
+			NS="NIS"
+			NS_NAME="map"
+			case "${D}" in
+			    bootparams)
+				mapname=${D}
+			    ;;
+			    ethers)
+				mapname=${D}.byname
+				[ "${T}" = "byaddr" ] && mapname=${D}.byaddr
+			    ;;
+			    hosts)
+				mapname=${D}.byname
+				[ "${T}" = "byaddr" ] && mapname=${D}.byaddr
+				[ "${T}" = "byuser" ] && mapname=${D}.byuser
+			    ;;
+			esac
+			ANS=`ypmatch "${K}" "${mapname}" 2>/dev/null`
+			if [ $? -eq 0 ]; then
+			    status=0
+			    break
+			fi
+		    fi
+		    ;;
+
+		nisplus)
+		    if [ "${HAVE_NISPLUS}" -ne 0 ]; then
+			NS="NIS+"
+			NS_NAME="table"
+			case "${D}" in
+			    bootparams)
+				keyname=name
+			    ;;
+			    ethers)
+				keyname=name
+				[ "${T}" = "byaddr" ] && keyname=addr
+			    ;;
+			    hosts)
+				keyname=name
+				[ "${T}" = "bycname" ] && keyname=cname
+				[ "${T}" = "byaddr" ] && keyname=addr
+			    ;;
+			esac
+			ANS=`nismatch "${keyname}=${K}" "${D}.org_dir" 2>/dev/null`
+			if [ $? -eq 0 ]; then
+			    status=0
+			    break
+			fi
+		    fi
+		    ;;
+		*)
+		    NS="Unknown"
+		    NS_NAME="Unknown"
+		    SRC="Unknown"
+		    ANS=""
+		    ;;
+	    esac
+	done
+	ANS=`echo -e "$ANS" | sed -e 's/#.*$//'`
+	echo -e "status=${status}; SRC=${SRC}; ANS=\"${ANS}\"; NS=\"${NS}\"; NS_NAME=\"${NS_NAME}\""
+}
+
+#
+# Solaris 2.X system - determine which name service is
+# being used
+init_lookup() {
+	HAVE_DNS=0
+	HAVE_NIS=0
+	HAVE_NISPLUS=0
+
+	#
+	# figure out what options the server has for its database(s)
+	#
+	if [ -f /etc/resolv.conf ]; then
+	    # DNS Available for host lookups.
+	    HAVE_DNS=1
+	fi
+
+	if [ -f /var/nis/NIS_COLD_START ]; then
+	    # NIS+_client
+	    HAVE_NISPLUS=1
+	fi
+
+	if ( ps -ef | grep "[ /]nisd" > /dev/null ); then
+	    # NIS+_server
+	    HAVE_NISPLUS=1
+	fi
+
+	if ( ps -ef | grep "[ /]ypserv" > /dev/null ); then
+	    # NIS_server
+	    HAVE_NIS=1
+	fi
+
+	if ( ps -ef | grep "[ /]ypbind" > /dev/null ); then
+	    # NIS_client
+	    HAVE_NIS=1
+	fi
+}
+
+# set the HOST_NAME variable, return status of match
+get_hostname()
+{
+	HOST_NAME=""
+	eval `lookup hosts "${1}" byname "${2}"`
+	if [ "$status" -eq 0 ]; then
+		if [ "$NS" = "NIS+" ]; then
+			HOST_NAME=`echo ${ANS} | \
+				(read cname name addr junk; echo $name)`
+		elif [ "$NS" = "NIS" ]; then
+			HOST_NAME=`echo ${ANS} | \
+				(read addr name junk; echo $name)`
+		elif [ "$NS" = "DNS" ]; then
+			HOST_NAME=`echo ${ANS} | (read junk name; echo $name)`
+		else
+			HOST_NAME=`echo ${ANS} | \
+				(read addr name junk; echo $name)`
+		fi
+	fi
+	return $status
+}
+
+# search hostname by IP address
+# set the HOST_NAME variable, return status of match
+get_hostname_byaddr()
+{
+	HOST_NAME=""
+	eval `lookup hosts "$1" byaddr "$2"`
+	if [ "$status" -eq 0 ]; then
+		if [ "$NS" = "NIS+" ]; then
+			HOST_NAME=`echo ${ANS} | \
+				(read cname name addr junk; echo $name)`
+		elif [ "$NS" = "NIS" ]; then
+			HOST_NAME=`echo ${ANS} | \
+				(read addr name junk; echo $name)`
+		elif [ "$NS" = "DNS" ]; then
+			HOST_NAME=`echo ${ANS} | (read addr name; echo $name)`
+		else
+			HOST_NAME=`echo ${ANS} | \
+				(read addr name junk; echo $name)`
+		fi
+	fi
+	return $status
+}
+
+# set the HOST_ADDR variable, return status of match
+get_hostaddr()
+{
+	HOST_ADDR=""
+
+	# skip name resolution if we already got IP address
+        expr "$1" : '\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)' \
+	    >/dev/null
+        if [ $? -eq 0 ]; then
+		HOST_ADDR=$1
+		return 0
+	fi
+
+	eval `lookup hosts "${1}" byname "${2}"`
+	if [ "$status" -eq 0 ]; then
+		if [ "$NS" = "NIS+" ]; then
+			HOST_ADDR=`echo ${ANS} | \
+				(read cname name addr junk; echo $addr)`
+		elif [ "$NS" = "NIS" ]; then
+			HOST_ADDR=`echo ${ANS} | \
+				(read addr name junk; echo $addr)`
+		elif [ "$NS" = "DNS" ]; then
+			HOST_ADDR=`echo ${ANS} | (read addr junk; echo $addr)`
+		else
+			HOST_ADDR=`echo ${ANS} | \
+				(read addr name junk; echo $addr)`
+		fi
+	fi
+	return $status
+}
+
+# set the HOST_ADDR variable, return status of match
+get_etheraddr()
+{
+	ETHERNET_ADDR=""
+	eval `lookup ethers "${1}" byname "${2}"`
+	if [ "$status" -eq 0 ]; then
+		if [ "$NS" = "NIS+" ]; then
+			ETHERNET_ADDR=`echo ${ANS} | \
+				(read addr name junk; echo $addr)`
+		elif [ "$NS" = "NIS" ]; then
+			ETHERNET_ADDR=`echo ${ANS} | \
+				(read addr name junk; echo $addr)`
+		else
+			ETHERNET_ADDR=`echo ${ANS} | \
+				(read addr name junk; echo $addr)`
+		fi
+	fi
+	return $status
+}
+
+#
+# name_to_ip_addr
+#
+# Purpose : Generate a printable IP address from a system name.  Intended
+#	    for use with user-readable output, so writes out a meaningful
+#	    description if the look-up fails.
+#
+# Argument :
+#   $1 - the name of the system whose IP address is requested
+#
+# Results :
+#   IP address or equivalent written to standard output.
+#   Status returned
+#
+name_to_ip_addr()
+{
+	HOST_ADDR=""
+	get_hostaddr $1
+	status=$?
+	if [ -z "${HOST_ADDR}" ]; then
+		echo ip-addr-for-$1
+	else
+		echo ${HOST_ADDR}
+	fi
+	return $status
+}
+
+# return status of match
+in_bootparams()
+{
+	eval `lookup bootparams ${1} byname ${2}`
+	return $status
+}
+
+# return files, nis or nisplus for the src of a table/map
+table_src()
+{
+	if [ "$NS" = "NIS+" ]; then
+		line=`egrep "^${1}:" /etc/nsswitch.conf 2>/dev/null`
+		if [ $? -ne 0 ]; then
+			NS_SRC="files"
+		else
+			NS_SRC=`echo $line | awk '{print $2}'`
+		fi
+	elif [ "$NS" = "NIS" ]; then
+		# ypwhich always exits 0, even if no map exists
+		NS_SRC=`ypwhich -m ${1} 2>&1 | ( read first junk; echo $first )`
+		if [ "${NS_SRC}" = "ypwhich:" ] ; then
+			# no map/server exists
+			NS_SRC="files"
+		else
+			NS_SRC="nis"
+		fi
+	else
+		NS_SRC="files"
+	fi
+}
+
+#
+# check_network() :
+#    This function splits out the parts of each the netmask($1), the
+# server ipaddress($2), and the client ipaddress($3).  It ANDs each
+# part of the server ipaddress with the associated part of the
+# netmask.  It also ANDs each part of the client ipaddress with the
+# associated part of the netmask.  The final setp is to determine if
+# the results of the two ANDs are equal.  If they are equal the client
+# is on the same network interface as the server ipaddress.
+#
+# INPUTS:
+#    netmask - netmask of the server network interface, $1
+#    server ipaddress - network address of the server network interface, $2
+#    client ipaddress - network address of the client machine $3
+#
+# OUTPUTS:
+#    NETWORK_MATCHED -- 0, not matched
+#                       1, match found
+#
+check_network()
+{
+        # split out the parts of the netmask
+	nm1=`expr $1 : '\(..\)......'`
+	nm2=`expr $1 : '..\(..\)....'`
+	nm3=`expr $1 : '....\(..\)..'`
+	nm4=`expr $1 : '......\(..\)'`
+
+	# split out the parts of the server ip address
+	SNO1=`expr $2 : '\([0-9]*\)\..*'`
+	SNO2=`expr $2 : '[0-9]*\.\([0-9]*\)\..*'`
+	SNO3=`expr $2 : '[0-9]*\.[0-9]*\.\([0-9]*\)\..*'`
+	SNO4=`expr $2 : '[0-9]*\.[0-9]*\.[0-9]*\.\([0-9]*\)'`
+
+	# adb is used here to get the 'bitwise' operator functionality.
+	# And adb picks up the core file if it is present in the current folder.
+	# To avoid this, null out adb's "object" and "core" arguments
+	# so that it doesn't bother looking for a core file at all.
+
+	# AND the server ipaddress and the netmask
+	SNF1=`echo -e "0t${SNO1}&${nm1}=d" | adb /dev/null /dev/null`
+	SNF2=`echo -e "0t${SNO2}&${nm2}=d" | adb /dev/null /dev/null`
+	SNF3=`echo -e "0t${SNO3}&${nm3}=d" | adb /dev/null /dev/null`
+	SNF4=`echo -e "0t${SNO4}&${nm4}=d" | adb /dev/null /dev/null`
+
+        tmp="${SNF1}.${SNF2}.${SNF3}.${SNF4}"
+	MASKED_SRVR=`echo $tmp | sed 's/ //g'`
+
+	# split out the parts of the client ip address
+	CNO1=`expr $3 : '\([0-9]*\)\..*'`
+	CNO2=`expr $3 : '[0-9]*\.\([0-9]*\)\..*'`
+	CNO3=`expr $3 : '[0-9]*\.[0-9]*\.\([0-9]*\)\..*'`
+	CNO4=`expr $3 : '[0-9]*\.[0-9]*\.[0-9]*\.\([0-9]*\)'`
+
+	# AND the client ipaddress and the netmask
+	CNF1=`echo -e "0t${CNO1}&${nm1}=d" | adb /dev/null /dev/null`
+	CNF2=`echo -e "0t${CNO2}&${nm2}=d" | adb /dev/null /dev/null`
+	CNF3=`echo -e "0t${CNO3}&${nm3}=d" | adb /dev/null /dev/null`
+	CNF4=`echo -e "0t${CNO4}&${nm4}=d" | adb /dev/null /dev/null`
+
+        tmp="${CNF1}.${CNF2}.${CNF3}.${CNF4}"
+	MASKED_CLNT=`echo $tmp | sed 's/ //g'`
+
+	NETWORK_MATCHED=0
+	if [ ${MASKED_SRVR} = ${MASKED_CLNT} ]; then
+	    NETWORK_MATCHED=1
+        fi
+}
+
+
+# convert any host alias to real client name
+get_realname()
+{
+	get_hostname ${CLIENT_NAME}
+
+	if [ ! "${HOST_NAME}" ]; then
+		echo -e "Error: unknown client \"${CLIENT_NAME}\""
+		cleanup_and_exit 1
+	fi
+
+	CLIENT_NAME=${HOST_NAME}
+}
+
+#
+# tftp_file_name
+#
+# Purpose : Determine the name to use for installing a file in ${Bootdir}.
+#	    Use an existing file if there is one that matches, otherwise
+#	    make up a new name with a version number suffix.
+#
+# Arguments :
+#   $1 - the file to be installed
+#   $2 - the prefix to use for forming a name
+#
+# Results :
+#   Filename written to standard output.
+#
+tftp_file_name()
+{
+	SRC=$1
+	BASE=$2
+	file_to_use=
+
+	CONV_GRP=`echo ${PGRP} | ${TR} "[a-z]" "[A-Z]"`
+
+	# Determine the name to use for the file in bootdir.
+	# Either use an existing file or make up a new name with a version
+	# number appended.
+	for i in ${Bootdir}/${BASE}.${CONV_GRP}.${VERSION}* ; do
+		#
+		# avoid symbolic links, or we can end up with
+		# inconsistent references
+		#
+		if [ -h $i ]; then
+			continue
+		fi
+
+		if cmp -s $SRC $i; then
+			file_to_use=$i
+			break
+		fi
+	done
+
+	if [ "$file_to_use" ]; then
+		file_to_use=`basename $file_to_use`
+	else
+		# Make this name not a subset of the old style names, so old style
+		# cleanup will work.
+
+		max=0
+		for i in ${Bootdir}/${BASE}.${CONV_GRP}.${VERSION}* ; do
+			#max_num=`expr $i : ".*${BASE}.${CONV_GRP}.${VERSION}-\(.*\)"`
+
+			#if [ "$max_num" -gt "$max" ]; then
+				max=1
+			#fi
+		done
+
+		max=`expr $max + 1`
+
+		file_to_use=${BASE}.${CONV_GRP}.${VERSION}-${max}
+	fi
+	echo $file_to_use
+}
+
+#
+# tftp_new_file_size
+#
+# Purpose : Determine the amount of extra space required to install a file.
+#	    Report 0 if the file already exists, otherwise the size of the
+#	    file in units determined by -sk.
+#
+# Arguments :
+#   $1 - the file to be installed
+#   $2 - the place to install it
+#
+# Results :
+#   Size written to standard output.
+#
+tftp_new_file_size()
+{
+	SRC=$1
+	DEST=$2
+
+	if [ -f "$2" ]; then
+		echo 0
+	else
+		du -sk ${SRC} | ( read size name; echo $size )
+	fi
+}
+
+#
+# setup_tftp
+#
+# Purpose : Create a link from one filename to another.  Also store a
+#	    command in the cleanup file to remove the created link.
+#
+# Arguments :
+#   $1 - the link target
+#   $2 - the link source
+#
+setup_tftp()
+{
+	echo -e "rm /tftpboot/$1" >> ${CLEAN}
+
+	if [ -h /tftpboot/$1 ]; then
+    	    # save it, and stash the cleanup command
+    	    mv /tftpboot/$1 /tftpboot/$1-
+	    echo -e "mv /tftpboot/$1- /tftpboot/$1" >> ${CLEAN}
+	fi
+
+	ln -s $2 /tftpboot/$1
+}
+
+#
+# Warning message - initial line
+#
+warn()
+{
+	echo -e "WARNING:	$1"
+}
+
+#
+# Warning message continuation routine
+#
+warnc()
+{
+	echo -e "		$1"
+}
+
+#
+# warn_export
+#
+# Purpose : Warn the user that a filesystem is shared, but is shared with the
+#	    wrong permissions.
+#
+# Arguments :
+#   none
+#
+warn_export()
+{
+	echo -e "${EXP_FS} already has an entry in ${EXPORTS}."
+	echo -e "However, ${EXP_FS} must be ${1} read-only with root access."
+
+	if [ "X$CLIENT_TYPE" = "XRARP" ] ; then
+		echo -e "Use ro and either anon=0 or root=${CLIENT_NAME} for ${EXP_FS}."
+		echo -e "The ${EXPORTS} file must be fixed and ${EXP_FS} ${1}"
+		echo -e "before ${CLIENT_NAME} can boot."
+	else
+		echo -e "Use ro and anon=0 for ${EXP_FS}.  The ${EXPORTS} file must be"
+		echo -e "fixed and ${EXP_FS} ${1} before \c"
+		if [ "X$DHCP_CLASS_NAME" = "X" ] ; then
+			echo -e "${ETHER_ADDR} can boot."
+		else
+			echo -e "${PLATFORM_NAME} machines can boot."
+		fi
+	fi
+}
+
+#
+# export_fs
+#
+# Purpose : Check to see if directory is exported.  If not export it
+#
+# Arguments :
+#   $1 - the filesystem to be exported
+#
+export_fs()
+{
+
+#	# handle ZFS file systems differently
+#	df -F zfs $1 >/dev/null 2>&1
+#	if [ $? -eq 0 ] ; then
+#		export_zfs_dir $1
+#		return
+#	fi
+
+	LAST_EXPORT=$EXP_FS
+	unset EXP_FS
+	FS_TO_EXPORT=$1
+	#
+	# Set EXP_FS to be the filesystem/directory to use for export
+	#
+	# It may already be exported, if so fine. If not, derive valid
+	# EXP_FS from the current FS_TO_EXPORT directory.  If
+	# FS_TO_EXPORT in an exported fs, use that fs. If FS_TO_EXPORT
+	# in an exported subdir, use that subdir.  If FS_TO_EXPORT in
+	# an fs with exported subdirs, if FS_TO_EXPORT in one of those
+	# subdirs, use it, otherwise use FS_TO_EXPORT
+	#
+
+	# first check if the name is already in export file
+	awk '$0 !~ /^#/ {
+		if ('${EXP_FLD}' == "'${FS_TO_EXPORT}'") {find=1; exit}
+	    }
+
+	    END {
+		if (find == 1) exit 0; else exit 1
+	    }' ${EXPORTS}
+
+	if [ $? -eq 0 ]; then
+		# FS_TO_EXPORT already there
+		EXP_FS=$FS_TO_EXPORT
+	else
+		# FS_TO_EXPORT is not already in export file determine
+		# fs that FS_TO_EXPORT is in assume that by sorting
+		# fs's in reverse order, the first match should be the
+		# filesystem it belongs too.
+		CD_FS=$FS_TO_EXPORT
+		#
+		# Note: there is an 'l' option after the
+		#       'k' option.  This
+		#       is to limit df to local file systems.
+		#
+		for i in `df -kl | grep "^/dev" |
+			awk '{ print $6 }' | sort -r`
+		do
+			if [ "$i" != "$FS_TO_EXPORT" ]; then
+				dir=`echo $i |
+				    awk '{
+					if (length($1) < length(FS_TO_EXPORT))
+					    print substr(FS_TO_EXPORT,1, length($1))
+				    }' FS_TO_EXPORT=$FS_TO_EXPORT`
+			else
+				dir=$FS_TO_EXPORT
+			fi
+			if [ "$i" = "$dir" ]; then
+				CD_FS=$dir
+				break
+			fi
+		done
+
+		# CD_FS is now set to be the filesystem the CD boot
+		# image is in
+
+		# if we're in a dir that is already exported, use that
+		for i in `awk '$0 !~ /^#/ {print '${EXP_FLD}'}' ${EXPORTS} | \
+			    egrep "^${CD_FS}"`
+		do
+			# The expr command used to be 'expr
+			# ${FS_TO_EXPORT} : "${i}"', but that fails
+			# when i is /, which is the case if root is
+			# exported.
+			if ( expr ${FS_TO_EXPORT} : "\(${i}\).*" \
+							> /dev/null 2>&1 ); then
+				EXP_FS=$i
+				break
+			fi
+		done
+
+		# just use the CD dir
+		if [ -z "${EXP_FS}" ]; then
+			EXP_FS=$FS_TO_EXPORT
+		fi
+	fi
+	#echo -e "Using $EXP_FS in ${EXPORTS} file"
+
+	######################################################################
+	# now we have gathered all the needed information, configure the server
+	# part. 1 - things that are shared by all clients
+	#
+	# check /etc/exports or /etc/dfs/dfstab for existing export of the CDROM
+	#
+	# grep for CDROM path, if not there, put it there and export it
+
+	# Check to see if EXP_FS exists within the EXPORTS
+	# file if so then verify that if is exported with ro &
+	# root access
+	awk '
+	    BEGIN { flag = -1 }
+	    {
+		if ($NF != "'${EXP_FS}'") {
+		    next
+		}
+
+		flag = 0
+		for (f=1; f <= NF; f++) {
+		    if (substr($f, 1, 2) == "-o") {
+			if (length($f) == 2)
+			    str=$(f+1)
+			else
+			    str=substr($f, 3, length($f)-2)
+
+			cnt=split(str, args, ",")
+			for (i=1; i<=cnt; i++) {
+
+			    if (args[i] == "ro")
+				flag++
+
+			    if (args[i] == "anon=0")
+				flag++
+
+			    if (substr(args[i], 1, 5) == "root=") {
+				tmp=substr(args[i], 6, length(args[i])-5)
+				rcnt=split(tmp, root, ":")
+				for (j=1; j<=rcnt; j++)
+				    if (root[j] == "'${CLIENT_NAME}'") {
+					flag++
+				    }
+			    }
+			}
+		    }
+		}
+	    }
+	    END {
+		if (flag == -1)
+		    exit 2
+
+		if (flag >= 2)
+		    exit 0
+		else
+		    exit 1
+	    }' ${EXPORTS}
+	ret_code=$?
+
+	#
+	# Only warn the user once that a file system is not
+	# exported correctly.  If it has been done the first
+	# time through then don't make the call again.
+	#
+	if [ $ret_code -eq 1 -a "$EXP_FS" != "$LAST_EXPORT" ]; then
+		warn_export "shared"
+	fi
+
+	if [ $ret_code -eq 2 ]; then
+		if [ ! -f ${EXPORTS}.orig -a -f "${EXPORTS}" ]; then
+			echo -e "saving original ${EXPORTS} in" \
+			    "${EXPORTS}.orig"
+			cp ${EXPORTS} ${EXPORTS}.orig
+		fi
+
+		echo -e ""
+		echo -e ""
+	fi
+}
+
+#
+# export_zfs_dir
+#
+# Purpose : Check to see if directory is in a file system that is
+#   correctly exported for network installation access.  If not,
+#   export it if possible.
+#
+#   (this function is specific to zfs file systems).
+#
+# Here's how it works:
+# First we find the file system in which the directory resides.
+# Then we determine its export status.  Here are the alternatives
+# and what we do in each case:
+#
+#  zfs sharenfs property = "off"
+#
+#	In this case, either the file system isn't exported at all,
+#	or, it's exported through /etc/dfs/dfstab.  If it isn't
+#	exported at all, export it, using the zfs-standard way
+#	of exporting file systems (which is to set the sharenfs
+#	property to the appropriate options for share(1M), which
+#	in this case is "ro,anon-0").  If the file system IS
+#	exported through the use of /etc/dfs/dfstab, make sure
+#	it is exported with the correct options (ro,readable
+#	by root).  If not, report an error, since we're not going
+#	to override the user's selected options.
+#  zfs sharenfs property = "on"
+#	report a warning.  The user has explicitly shared the
+#	the file systems, but the default options for sharing
+#	aren't correct for netinstall images.  The user is told
+#	to set the options correctly.
+#  zfs sharenfs property = <share(1M) opts>
+#	If the sharenfs property value is neither "off" not "on",
+#	it is a list of share options.  In effect, it's "on" with
+#	options.  Make sure that the options are correct for
+#	netinstall image usage (i.e, read-only and readable by
+#	root).  If so, no need to export it.  It's already exported.
+#	If not, report a warning and don't modify the share
+#	options.  We won't override the user's explicit options.
+#
+#
+# Arguments :
+#   $1 - the directory to be exported
+#
+export_zfs_dir()
+{
+	LAST_EXPORT=$EXP_FS
+	unset EXP_FS
+	DIR_TO_EXPORT=$1
+
+	#
+	# First determine the file system in which the directory
+	# to be exported resides.  Set EXP_FS to the name of
+	# the file system.
+	#
+
+	dataset=`df -k $DIR_TO_EXPORT | tail -1 |  \
+		(read spec j1 j2 j3 j4 mntpt; echo $spec)`
+	EXP_FS=`df -k $DIR_TO_EXPORT | tail -1 |  \
+		(read spec j1 j2 j3 j4 mntpt; echo $mntpt)`
+
+
+	#
+	# Now see if EXP_FS is already exported, and if so,
+	# with the correct options
+	#
+
+	sharenfsprop=`zfs list -H -o sharenfs $dataset`
+	if [ $sharenfsprop = "off" ] ; then
+		if fs_in_dfstab $EXP_FS ; then
+			shareopts=`get_dfs_shareopts $EXP_FS`
+			if valid_share_opts $shareopts ; then
+				return
+			else
+				if [ "$EXP_FS" != "$LAST_EXPORT" ] ; then
+					warn_export "shared"
+				fi
+				return
+			fi
+		else
+			zfs set sharenfs="ro,anon=0" $dataset
+			ret=$?
+			if [ $ret != 0 ] ; then
+				echo -e "Error setting property on dataset $dataset, error code = $ret"
+			fi
+			return
+		fi
+	elif [ $sharenfsprop = "on" ] ; then
+		warn_zfs_export
+		return
+	else   # sharenfs property must be the list of share options
+		if valid_share_opts $sharenfsprop ; then
+			return
+		else
+			if [ "$EXP_FS" != "$LAST_EXPORT" ] ; then
+				warn_zfs_export
+			fi
+
+		fi
+	fi
+
+}
+
+#
+# returns TRUE (0) if the argument is a file system listed
+# in /etc/dfs/dfstab
+#
+fs_in_dfstab()
+{
+	FS_TO_EXPORT=$1
+	awk '$0 !~ /^#/ {
+		if ('${EXP_FLD}' == "'${FS_TO_EXPORT}'") {find=1; exit}
+	    }
+
+	    END {
+		if (find == 1) exit 0; else exit 1
+	    }' ${EXPORTS}
+
+	return $?
+}
+
+#
+# For the file system passed in as the argument, find the
+# file system's entry in /etc/dfs/dfstab and return the
+# share options.  If none, return "".
+#
+get_dfs_shareopts()
+{
+	FS_TO_CHECK=$1
+
+	awk '
+	    BEGIN {str=""}
+	    $0 ~ /^#/ { next }
+	    {
+		if ($NF != "'${FS_TO_CHECK}'") {
+		    next
+		}
+
+		for (f=1; f <= NF; f++) {
+		    if (substr($f, 1, 2) == "-o") {
+			if (length($f) == 2)
+			    str=$(f+1)
+			else
+			    str=substr($f, 3, length($f)-2)
+
+		    }
+		}
+		print str
+		exit
+	    }' ${EXPORTS}
+}
+
+valid_share_opts()
+{
+	echo -e "" | awk 'BEGIN {rofound=0; rootfound=0}
+	     {
+		cnt=split(OPTSTR, args, ",")
+		for (i=1; i<=cnt; i++) {
+
+		    if (args[i] == "ro")
+			rofound++;
+
+		    if (args[i] == "anon=0")
+			rootfound++
+
+		    if (substr(args[i], 1, 5) == "root=") {
+			tmp=substr(args[i], 6, length(args[i])-5)
+			rcnt=split(tmp, root, ":")
+			for (j=1; j<=rcnt; j++)
+			    if (root[j] == "'${CLIENT_NAME}'") {
+				rootfound++
+			    }
+		    }
+	        }
+	    }
+	    END {
+		if (rofound == 0 || rootfound == 0)
+		    exit 1
+		else
+		    exit 0
+	    }' OPTSTR=$1
+	return $?
+}
+
+#
+# warn_zfs_export
+#
+# Purpose : Warn the user that a zfs filesystem is shared, but is shared
+#	with the wrong permissions.
+#
+# Arguments :
+#   none
+#
+warn_zfs_export()
+{
+	echo -e "${EXP_FS} is already shared."
+	echo -e "However, the zfs file system ${EXP_FS} must be shared"
+	echo -e "read-only with root access.  Use the \"zfs set\" command to"
+	echo -e "set the sharenfs property for file system ${EXP_FS} as follows:"
+
+	if [ "X$CLIENT_TYPE" = "XRARP" ] ; then
+		echo -e "Use ro and either anon=0 or root=${CLIENT_NAME} for ${EXP_FS}."
+		echo -e "This must be fixed and ${EXP_FS} shared"
+		echo -e "before ${CLIENT_NAME} can boot."
+	else
+		echo -e "Use ro and anon=0 for ${EXP_FS}.  This must be"
+		echo -e "fixed and ${EXP_FS} shared before \c"
+		if [ "X$DHCP_CLASS_NAME" = "X" ] ; then
+			echo -e "${ETHER_ADDR} can boot."
+		else
+			echo -e "${PLATFORM_NAME} machines can boot."
+		fi
+	fi
+}
+abort()
+{
+	echo -e "${myname}: Aborted"
+	cleanup_and_exit 1
+}
+
+
+#
+# Do the IP ADDRESS checks
+#
+rarp_check_ipaddr()
+{
+	# if someone gives IP_ADDR and it doesn't match, complain, else
+	# update /etc/hosts
+	if [ "X${IP_ADDR}" != "X" ] ; then
+		get_hostaddr ${CLIENT_NAME}
+
+		# check to see if it already exists
+		if [ "${HOST_ADDR}" -a "${IP_ADDR}" != "${HOST_ADDR}" ]; then
+			echo -e "Error: Different IP address found in the $NS hosts $NS_NAME"
+			echo -e "       Address for host: ${HOST_ADDR} ${CLIENT_NAME}"
+			cleanup_and_exit 1
+		fi
+
+		# if client not in host file, update host file
+		get_hostaddr "${CLIENT_NAME}" files
+		if [ $? -ne 0 ]; then
+			echo -e "Adding IP address for ${CLIENT_NAME} to /etc/hosts"
+			echo -e "${IP_ADDR} ${CLIENT_NAME}" >> /etc/hosts
+			get_hostaddr ${CLIENT_NAME}
+			if [ $? -ne 0 ]; then
+				warn "IP address for \"${CLIENT_NAME}\" was added to /etc/hosts,"
+				warnc "yet nsswitch.conf is not configured to search there."
+				warnc "See nsswitch.conf(4) for additional information."
+			fi
+		fi
+	else
+		# if we're not given the address, look it up
+		get_hostaddr ${CLIENT_NAME}
+		IP_ADDR=${HOST_ADDR}
+		# if still don't have it, error
+		if [ ! "${IP_ADDR}" ]; then
+			echo -e "Error: IP address for $CLIENT_NAME not found in the $NS hosts $NS_NAME"
+			echo -e "       Add it to the $NS hosts $NS_NAME and rerun ${myname}."
+			cleanup_and_exit 1
+		fi
+	fi
+}
+
+#
+# Do the ETHERNET ADDRESS checks
+#
+rarp_check_ether()
+{
+	# if an ethernet address is supplied on the command line, -e 8:0:20:e:a:02,
+	# then do the following:
+	#
+	#	- if there is an existing entry (local files, NIS, etc.) and this
+	#	  entry doesn't match the supplied value, then complain & exit
+	#
+	#	- if no existing entry, then update /etc/ethers
+	#
+	if [ "${ETHER_ADDR}" ] ; then
+		# check to see if it already exists
+		get_etheraddr ${CLIENT_NAME}
+		if [ "${ETHERNET_ADDR}" -a "${ETHER_ADDR}" != "${ETHERNET_ADDR}" ]; then
+			echo -e "Error: Different Ethernet number found in the $NS ethers $NS_NAME"
+			echo -e "       Address for host: ${ETHERNET_ADDR} ${CLIENT_NAME}"
+			cleanup_and_exit 1
+		fi
+
+		# if client not in ethers file, update ethers file
+		get_etheraddr "$CLIENT_NAME" files
+		if [ $? -ne 0 ]; then
+			echo -e "Adding Ethernet number for ${CLIENT_NAME} to /etc/ethers"
+			echo -e "${ETHER_ADDR} ${CLIENT_NAME}" >> /etc/ethers
+			get_etheraddr ${CLIENT_NAME}
+			if [ $? -ne 0 ]; then
+				warn "Ethernet address for \"${CLIENT_NAME}\" was added to /etc/ethers"
+				warnc "yet nsswitch.conf is not configured to search there."
+				warnc "See nsswitch.conf(4) for additional information."
+			fi
+		fi
+	else
+		#
+		# no ethernet address was supplied.  Check to see if an entry
+		# exists. If one does, set ETHER_ADDR to that value.
+		#
+		get_etheraddr "$CLIENT_NAME"
+		if [ $? -ne 0 ]; then
+			echo -e "Error: Ethernet address for $CLIENT_NAME not found."
+			cleanup_and_exit 1
+		fi
+		ETHER_ADDR=$ETHERNET_ADDR
+	fi
+}
+
+#
+# start the rarp and bootparams servers
+#
+start_rarpd_bootparamd()
+{
+	if (ps -e | awk '{print $NF}' | \
+	    grep "\<`basename ${Cmd_rarpd}`\>" >/dev/null); then
+		: # found it, no need to start
+	else
+		if [ ! -x "${Cmd_rarpd}" ] ; then
+			echo -e "${Cmd_rarpd} not found"
+			cleanup_and_exit 1
+		fi
+
+		if [ -f /lib/svc/share/smf_include.sh ]; then
+			. /lib/svc/share/smf_include.sh
+
+			if [ smf_present ]; then
+				# We're running on a system with smf present.
+				# Enable network/rarp if not already enabled.
+				state=`/usr/bin/svcprop network/rarp:default/:properties/restarter/state`
+				if [ "$state" != "online" ]; then
+					echo -e "enabling network/rarp service"
+					/usr/sbin/svcadm enable network/rarp
+				fi
+			else
+				echo -e "starting rarpd"
+				OLDWD=`pwd`
+				cd /
+				${Cmd_rarpd} -a
+				cd ${OLDWD}
+			fi
+		else
+			echo -e "starting rarpd"
+			OLDWD=`pwd`
+			cd /
+			${Cmd_rarpd} -a
+			cd ${OLDWD}
+		fi
+	fi
+
+	# need to fix nsswitch.conf for bootparams
+	srcs=`get_sources bootparams`
+	if [ "${srcs}" != "" ]; then
+		set -- ${srcs}
+		if [ "$1" != "files" ]; then
+			bpent="bootparams:	files"
+			for i in ${srcs}; do
+				if [ "$i" != "files" ]; then
+					bpent="${bpent} $i"
+				fi
+			done
+			ed -s /etc/nsswitch.conf <<-EOF
+				/bootparams:/
+				c
+				${bpent}
+				.
+				w
+				q
+				EOF
+			echo -e "changed bootparams entry in /etc/nsswitch.conf"
+		fi
+	fi
+
+	# rpc.bootparamd - normally started from rc.local or equivalent
+	if ( ps -ef | grep '[ /]rpc.bootparamd$' > /dev/null ) ; then
+		: # found it, no need to start
+	else
+		if [ ! -x "${Cmd_bpd}" ] ; then
+			echo -e "${Cmd_bpd} not found"
+			cleanup_and_exit 1
+		fi
+
+		if [ -f /lib/svc/share/smf_include.sh ]; then
+			. /lib/svc/share/smf_include.sh
+
+			if [ smf_present ]; then
+				# We're running on a system with smf present.
+				# Enable network/rpc/bootparams if not already
+				# enabled.
+				state=`/usr/bin/svcprop network/rpc/bootparams:default/:properties/restarter/state`
+				if [ "$state" != "online" ]; then
+					echo -e "enabling network/rpc/bootparams service"
+					/usr/sbin/svcadm enable \
+						network/rpc/bootparams
+				fi
+			else
+				echo -e "starting bootparamd"
+				OLDWD=`pwd`
+				cd /
+				${Cmd_bpd}
+				cd ${OLDWD}
+			fi
+		else
+			echo -e "starting bootparamd"
+			OLDWD=`pwd`
+			cd /
+			${Cmd_bpd}
+			cd ${OLDWD}
+		fi
+	fi
+}
+
+# start nfsd and mountd if needed
+start_nfsd_mountd()
+{
+	# only started when exports or dfs/dfstab are there
+	if [ -f /lib/svc/share/smf_include.sh ]; then
+		. /lib/svc/share/smf_include.sh
+
+		if [ smf_present ]; then
+			# We're running on a system with smf present.
+			# Enable nfs/server if not already enabled.
+			state=`/usr/bin/svcprop network/nfs/server:default/:properties/restarter/state`
+			if [ "$state" != "online" ]; then
+				echo -e "enabling network/nfs/server service"
+				/usr/sbin/svcadm enable \
+					network/nfs/server
+			fi
+			return
+		fi
+	fi
+
+}
+
+#
+# creation of bootparams file entry
+#
+# /etc/bootparams should override YP bootparams entry if it is before
+#   the "+" that says go to NIS.
+# a previous /etc/bootparams entry should supersede a later entry
+#
+# However, if a different server responds to the rarp request, the client
+# will go to that server for bootparam info & get wrong info out of NIS,
+# thus, ask sysadm to update NIS bootparam map if needed.
+#
+configure_bootparams()
+{
+
+	if [ "${CONFIG_SERVER}" ]; then
+		add_config="install_config=${CONFIG_SERVER}:${CONFIG_PATH}"
+	fi
+
+	if [ "${SYSID_CONFIG_SERVER}" ]; then
+		add_sysid_config="sysid_config=${SYSID_CONFIG_SERVER}"
+		add_sysid_config="${add_sysid_config}:${SYSID_CONFIG_PATH}"
+	fi
+
+	if [ "${BOOT_METHOD}" = "tftp" ] ; then
+		root_opts="rootopts=:rsize=32768,vers=3"
+	else
+		root_opts="rootopts=:rsize=8192,vers=3"
+	fi
+
+	BOOTPARAMS="${CLIENT_NAME} "
+	BOOTPARAMS="${BOOTPARAMS} root=${SERVER}:${IMAGE_PATH}"
+	BOOTPARAMS="${BOOTPARAMS} install=${PRODUCT_SERVER}:${PRODUCT_PATH}"
+	BOOTPARAMS="${BOOTPARAMS} boottype=:in ${add_sysid_config}"
+	BOOTPARAMS="${BOOTPARAMS} ${add_config} ${root_opts} ${NS_POLICY}"
+
+	eval `lookup bootparams ${CLIENT_NAME}`
+	# check if an entry for this client already in map
+	if [ "${NS}" != "local" ]; then
+		table_src bootparams
+		if [ "${NS_SRC}" != "files" ]; then
+			in_bootparams ${CLIENT_NAME}
+			if [ $? -eq 0 ] ; then
+				echo -e "Warning: ${CLIENT_NAME} has an entry in the $NS bootparams $NS_NAME."
+				echo -e "         Update it with the following entry:"
+				echo ${BOOTPARAMS}
+				echo
+			fi
+		fi
+	fi
+
+	# does an old entry already exist?
+	echo -e "updating /etc/bootparams"
+	grep "^${CLIENT_NAME}[ 	]" /etc/bootparams > /dev/null 2>&1
+	#
+	# Delete any existing ${CLIENT_NAME} entries in an existing
+	# bootparams file.
+	#
+	if [ $? -eq 0 ]; then
+		cp /etc/bootparams /etc/bootparams.orig
+		sed -e "/^${CLIENT_NAME}[ 	]/d" /etc/bootparams.orig \
+		    > /etc/bootparams
+	fi
+
+	#
+	# Add before + (NIS Tag) in file
+	#
+	if [ -s /etc/bootparams ] ; then
+		bootp_last=`tail -1 /etc/bootparams`
+		if [ "+" = "$bootp_last" ]; then
+			ed_cmd=i
+		else
+			ed_cmd=a
+		fi
+		# just tack ours on to end, but before "+"
+		( echo -e "/^+" ; echo $ed_cmd ; \
+		  echo -e "${BOOTPARAMS}" ; echo '.'; echo -e "w"; echo -e "q" ) | \
+		    ed /etc/bootparams > /dev/null
+	else
+		# no /etc/bootparams, this is easy
+		echo -e "${BOOTPARAMS}" >> /etc/bootparams
+	fi
+}
+
+#
+# MAIN - Program
+#
+
+myname=$0
+ID=`id`
+USER=`expr "${ID}" : 'uid=\([^(]*\).*'`
+unset NAME1 NAME2 IP_ADDR ETHER_ADDR PRODUCT_SERVER PRODUCT_PATH IMAGE_PATH tools_path
+unset SYSID_CONFIG_SERVER SYSID_CONFIG_PATH CONFIG_SERVER CONFIG_PATH NS_POLICY BOOT_FILE
+
+trap abort $SIGHUP $SIGINT $SIGQUIT $SIGTERM
+
+# Verify user ID before proceeding - must be root
+#
+if [ "${USER}" != "0" ]; then
+	echo -e "You must be root to run $0"
+	cleanup_and_exit 1
+fi
+
+#
+# Lock file to prevent simultaneous access of system files
+# (/etc/bootparams, /etc/ethers, etc.)
+#
+# This is not the best solution, race conditions still exist,
+# but it is better than nothing.  The lock file is created here
+# and removed in the cleanup_and_exit() function.
+#
+if [ ! -f $LOCKFILE ] ; then
+    LOCKFILE_CREATED=yes
+    echo $$ > $LOCKFILE
+else
+    echo -e "There is an existing install client lock file, ${LOCKFILE},"
+    echo -e "which indicates that process `cat $LOCKFILE` is executing"
+    echo -e "either an add_install_client or a rm_install_client.  If this"
+    echo -e "is not the case, delete the lock file, $LOCKFILE, and "
+    echo -e "execute $myname again.  Otherwise, wait until the lockfile is"
+    echo -e "removed and re-run $myname."
+    cleanup_and_exit 2
+fi
+
+# Set the umask.
+#
+umask 022
+
+if [ ! -f /etc/fstab ]; then
+	echo -e "no /etc/fstab, bailing out"
+	cleanup_and_exit 1
+fi
+
+# Set up parameters
+#
+Cmd_rarpd="/usr/sbin/rarpd"
+Cmd_bpd="/usr/sbin/rpc.bootparamd"
+Bootdir=/tftpboot
+#PATH=/sbin:/usr/sbin:/usr/bin:/etc:/etc/nfs
+EXPORTS=/etc/exports
+EXP_FLD='$NF'
+
+# export this so shareall can be found
+export PATH
+
+# since NIS_PATH won't be set when client boots, don't use it now
+unset NIS_PATH
+dash_t_s=
+
+#
+# Parse the command line options.
+#
+while [ "$1"x != "x" ]; do
+    case $1 in
+    -i)	IP_ADDR="$2";
+        if [ ! "$IP_ADDR" ]; then
+            usage ;
+        fi
+        # check with expr
+        IP_ADDR=`expr $IP_ADDR : '\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)'`
+        if [ ! "${IP_ADDR}" ] ; then
+                echo -e "mal-formed IP address: $2"
+                cleanup_and_exit 1
+        fi
+        shift 2;;
+    -e)	ETHER_ADDR="$2";
+        if [ "X$ETHER_ADDR" = "X" ]; then
+            usage ;
+        fi
+
+	ETHER_ADDR=`expr $ETHER_ADDR : '\([0-9a-fA-F][0-9a-fA-F]*\:[0-9a-fA-F][0-9a-fA-F]*\:[0-9a-fA-F][0-9a-fA-F]*\:[0-9a-fA-F][0-9a-fA-F]*\:[0-9a-fA-F][0-9a-fA-F]*\:[0-9a-fA-F][0-9a-fA-F]*\)'`
+
+        if [ ! "${ETHER_ADDR}" ] ; then
+                echo -e "mal-formed Ethernet address: $2"
+                cleanup_and_exit 1
+        fi
+        shift 2;;
+    -s)	PRODUCT_SERVER=`expr $2 : '\(.*\):.*'`
+    	PRODUCT_PATH=`expr $2 : '.*:\(.*\)'`
+        if [ ! "$PRODUCT_SERVER" ]; then
+            usage ;
+        fi
+        if [ ! "$PRODUCT_PATH" ]; then
+            usage ;
+        fi
+	dash_t_s=yes
+        shift 2;;
+    -t) SERVER=`expr $2 : '\(.*\):.*'`
+        # server part is optional and used to pick correct
+        # network interface on multihomed server.
+        if [ ! "$SERVER" ]; then
+            IMAGE_PATH=$2
+        else
+	    IMAGE_PATH=`expr $2 : '.*:\(.*\)'`
+	    # is it IP or host name
+	    SERVER_ADDR=`expr $SERVER : '\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)'`
+	    if [ -n "$SERVER_ADDR" ]; then
+		SERVER=""
+	    fi
+        fi
+        if [ -z "$IMAGE_PATH" ] && [ -z "$SERVER" ] && [ -z "$SERVER_ADDR" ]; then
+            usage ;
+        fi
+	dash_t_s=yes
+	shift 2;;
+    -D)	tools_path=$2
+        if [ ! "$tools_path" ]; then
+            usage ;
+        fi
+        shift 2;;
+    -d) CLIENT_TYPE="DHCP"
+	shift 1;;
+    -p)	SYSID_CONFIG_SERVER=`expr $2 : '\(.*\):.*'`
+    	SYSID_CONFIG_PATH=`expr $2 : '.*:\(.*\)'`
+        if [ ! "${SYSID_CONFIG_SERVER}" ]; then
+            usage ;
+        fi
+        if [ ! "${SYSID_CONFIG_PATH}" ]; then
+            usage ;
+        fi
+        shift 2;;
+    -c)	CONFIG_SERVER=`expr $2 : '\(.*\):.*'`
+    	CONFIG_PATH=`expr $2 : '.*:\(.*\)'`
+        if [ ! "$CONFIG_SERVER" ]; then
+            usage ;
+        fi
+        if [ ! "$CONFIG_PATH" ]; then
+            usage ;
+        fi
+        shift 2;;
+    -n)	NS_POLICY=`echo -e "ns=$2"`;
+	if [ ! "$2" ]; then
+		usage ;
+	fi
+        shift 2;;
+    -f) BOOT_FILE=$2
+	if [ ! "$BOOT_FILE" ] ; then
+	    usage ;
+	fi
+	shift 2;;
+
+    # -b option to introduce changes in a client
+    # E.g. console=ttya
+    # boot-args key in argument is treated specially. Its argument
+    # is inserted at the end of "kernel" line in menu.lst
+    # E.g. boot-args="- install text"
+    -b) case $2 in
+	    boot-args=*)
+		BOOT_ARGS=`expr "$2" : '[^=]*=\(.*\)'`;;
+	    *)
+		BARGLIST="$BARGLIST"$2",";;
+	esac
+	shift 2;;
+
+    -*)	# -anything else is an unknown argument
+        usage ;
+        ;;
+    [a-zA-Z0-9]*) # one or two trailing words
+        if [ $# -gt 2 -o $# -eq 0 ]; then
+            usage ;
+        fi
+	NAME1="$1";
+	NAME2="$2";
+        shift $#
+        ;;
+    *)	# then all else is spurious
+        usage ;
+        ;;
+    esac
+done
+
+if [ "${CLIENT_TYPE}" = "DHCP" ] ; then
+	if [ "X$IP_ADDR" != "X" ] ; then
+		echo -e "ERROR:  -i flag cannot be used with DHCP clients"
+		echo
+		usage
+	fi
+
+	if [ "X$NS_POLICY" != "X" ] ; then
+		echo -e "ERROR:  -n flag cannot be used with DHCP clients"
+		echo
+		usage
+	fi
+
+	if [ "X$ETHER_ADDR" = "X" ] ; then
+		if [ "X$NAME1" = "X" -o "X$NAME2" = "X" ] ; then
+			echo -e "ERROR: Either platform name or client platform group not specified"
+			echo
+			usage
+		fi
+
+		# Specified platform name and platform group
+		PLATFORM_NAME="$NAME1";
+		PGRP="$NAME2";
+	else
+		# Specified ethernet addr and platform group
+		PLATFORM_NAME="";
+		PGRP="$NAME1";
+        fi
+else # RARP client
+	if [ "X$BOOT_FILE" != "X" ] ; then
+		echo -e "ERROR:  -f flag cannot be used with RARP clients"
+		echo
+		usage
+	fi
+
+	if [ "X$NAME2" = "X" ] ; then
+		echo -e "ERROR: Either client name or client platform group is not specified."
+		echo
+		usage
+	fi
+
+	CLIENT_NAME="$NAME1"
+	PGRP="$NAME2"
+fi
+
+#
+# Get path to the product hierarchy
+# must maintain the hierarchy structure and RUN THIS COMMAND FROM THE HIERARCHY
+#
+# (1) find the path of the hierarchy.
+# it may be absolute path
+# it may be some relative path
+# it may be given in PATH
+
+if [ -n "${tools_path}" ]; then
+	TOOLS_DIR=$tools_path
+else
+	case ${myname} in
+	/*)     # absolute path, or found via $PATH (shells turn into abs path)
+		TOOLS_DIR=`dirname ${myname}`
+		myname=`basename ${myname}`
+		;;
+
+	./* | ../*)   # relative path from  "./" or ../, so we do a bit of clean up
+		TOOLS_DIR=`pwd`/`dirname ${myname}`
+		TOOLS_DIR=`(cd ${TOOLS_DIR} ; pwd )`
+		myname=`basename ${myname}`
+		;;
+
+	*)      # name found via "." in $PATH
+		TOOLS_DIR=`pwd`
+		;;
+	esac
+fi
+
+# TOOLS_DIR is now an absolute path to the tools
+# directory
+
+#
+## Set the PROD_DIR to the product directory
+## This may be either a full netinstall image
+## (Product and Tools/Boot directories exist)
+## or an install server image (only Tools and
+## Tools/Boot exist)
+#
+DISTRIBUTION_DIR=`(cd ${TOOLS_DIR}/../.. ; pwd )`
+SOLARIS_PROD_DIR=`(cd ${TOOLS_DIR}/.. ; pwd )`
+VERSION=`basename ${SOLARIS_PROD_DIR}`
+BUILD=`basename ${DISTRIBUTION_DIR}`
+
+if [ -n "${IMAGE_PATH}" ]; then
+	if [ ! -d ${IMAGE_PATH} ]; then
+		echo -e "${myname}: Install boot image ${IMAGE_PATH} does not exist"
+		cleanup_and_exit 1
+	fi
+elif [ "${PGRP}" = "i86pc" ]; then
+	IMAGE_PATH=${DISTRIBUTION_DIR}/boot
+else
+	IMAGE_PATH=${TOOLS_DIR}/Boot
+fi
+
+#
+# Verify that IMAGE_PATH is a valid boot image and exists
+#
+if [ ! -d ${IMAGE_PATH} ]; then
+	echo -e "ERROR: Install boot image ${IMAGE_PATH} does not exist"
+	cleanup_and_exit 1
+fi
+
+if [ "${PGRP}" = "i86pc" ]; then
+
+	# lofs mount /boot directory under /tftpboot
+	if [ ! -f ${IMAGE_PATH}/grub/pxegrub ]; then
+		echo -e "${myname}: ${IMAGE_PATH}/grub/pxegrub does not exist," \
+		    "invalid boot image"
+		cleanup_and_exit 1
+	fi
+
+	# Check if it is already mounted
+	line=`grep "^${IMAGE_PATH}[ 	]" /etc/fstab`
+	if [ $? = 0 ]; then
+		mountpt=`echo $line | cut -d ' ' -f3`
+		BootLofs=`basename "${mountpt}"`
+		BootLofsdir=`dirname "${mountpt}"`
+		if [ ${BootLofsdir} != ${Bootdir} ]; then
+			printf "${myname}: ${IMAGE_PATH} mounted at"
+			printf " ${mountpt}\n"
+			printf "${myname}: retry after unmounting and deleting"
+			printf " entry form /etc/fstab\n"
+			cleanup_and_exit 1
+		fi
+
+		# Check to see if the mount is sane, if not, kick it.
+		#
+		# Note: One might think that the case when kicking the
+		#       mounpoint won't work should then be handled, but
+		#	if that were the case, the code path for no existing
+		#	mount would have been taken resulting in a new
+		#	mountpoint being created.
+		#
+		if [ ! -f $mountpt/multiboot  ]; then
+			umount $mountpt
+			mount $mountpt
+		fi
+	else
+		# get a new directory name and mount IMAGE_PATH
+		max=0
+		for i in ${Bootdir}/I86PC.${VERSION}* ; do
+			max_num=`expr $i : ".*boot.I86PC.${VERSION}-\(.*\)"`
+			if [ "$max_num" -gt $max ]; then
+				max=$max_num
+			fi
+		done
+		max=`expr $max + 1`
+
+		BootLofs=I86PC.${VERSION}-${max}
+		mkdir -p ${Bootdir}/${BootLofs}
+		mount -F lofs -o ro ${IMAGE_PATH} ${Bootdir}/${BootLofs}
+		if [ $? != 0 ]; then
+			echo -e "${myname}: failed to mount ${IMAGE_PATH} on" \
+			   "${Bootdir}/${BootLofs}"
+			cleanup_and_exit 1
+		fi
+		printf "${IMAGE_PATH} - ${Bootdir}/${BootLofs} " >> /etc/fstab
+		printf "lofs - yes ro\n" >> /etc/fstab
+	fi
+	# cleanup of lofs mount is done after Menufile setup
+
+else # sparc: check to make sure that some critical file exists
+	if [ ! -f  ${IMAGE_PATH}/platform/${PGRP}/boot_archive ]; then
+		echo -e "${myname}: ${IMAGE_PATH}/platform/${PGRP}/boot_archive does not exist, invalid boot image"
+		cleanup_and_exit 1
+	fi
+fi
+
+# check to see if ${IMAGE_PATH} is a local filesystem
+# because we cannot export it otherwise.
+df -l ${IMAGE_PATH} > /dev/null 2>&1
+if [ $? -ne 0 ] ; then
+    echo -e "${myname}: ${IMAGE_PATH} is not in a local file system"
+    echo -e "           cannot export ${IMAGE_PATH} for install clients"
+    cleanup_and_exit 1
+fi
+
+# Determine which name service is being used
+#
+init_lookup
+
+##############################################################
+# locate the correct subnet hostname supported on the local machine.
+# check the local host table for any entry that matches the ip address
+# of the clients host name.
+#
+# The logic here is rather confusing and deserves explanation. The
+# following table summarizes actions based on inputs, which are:
+#
+#   server's host name specified (S column)
+#   server's IP address specified (A column)
+#   type of client (DHCP or RARP)
+#
+#
+# -----------------------------------------------------------------------------D
+# CLIENT TYPE |  S  |  A  | ACTION                                             |
+# -----------------------------------------------------------------------------|
+#    DHCP     |     |     | S = uname -n; A = resolve uname -n;                |
+#             |  X  |     | A = resolve S;                                     |
+#             |     |  X  | S = resolve A; if resolution fails S = A;          |
+#             |  X  |  X  |                                                    |
+# -----------------------------------------------------------------------------|
+#    RARP     |     |     | A = match interface based on client's subnet;      |
+#             |     |     |   S = resolve A; if resolution fails S = A;        |
+#             |  X  |     | A = resolve S;                                     |
+#             |     |  X  | S = resolve A; if resolution fails S = A;          |
+#             |  X  |  X  |                                                    |
+# -----------------------------------------------------------------------------D
+#
+if [ -z "$SERVER" ]; then
+	# set server hostname if it wasn't specified
+	if [ -n "$SERVER_ADDR" ]; then
+		# look for server name
+		get_hostname_byaddr "$SERVER_ADDR"
+		if [ -z "$HOST_NAME" ] ; then
+			warn "No host name found for $SERVER_ADDR"
+			SERVER=$SERVER_ADDR
+		else
+			SERVER=$HOST_NAME
+		fi
+	else
+		SERVER=`uname -n`
+	fi
+elif [ -z "$SERVER_ADDR" ]; then
+	# set server address based on provided server name
+	get_hostaddr "$SERVER"
+	if [ -z "$HOST_ADDR" ] ; then
+		echo -e "Could not resolve $SERVER to IP address"
+		cleanup_and_exit 1
+	fi
+	SERVER_ADDR=$HOST_ADDR
+fi
+
+if [ "X$CLIENT_TYPE" = "XRARP" ] ; then
+	get_realname
+
+	get_hostaddr ${CLIENT_NAME}
+	CLIENT_ADDR=${HOST_ADDR}
+
+	if [ -z "$SERVER_ADDR" ]; then
+	    SERVER_ADDR=`/sbin/ifconfig -a | while read ifname flags ; do
+		if [ "${ifname}" = "ether" ]; then
+			# read ether line from prev interface
+			read ifname flags
+			if [ $? -ne 0 ]; then
+				break
+			fi
+		elif [ "${ifname}" = "groupname" ]; then
+			# read groupname line
+			continue;
+		fi
+		read inet ipaddr netmask mask broadcast broadaddr
+		if [ "${ifname}" = "lo0:" ]; then
+			continue;
+		fi
+		if [ "$inet" = "zone" ]; then
+			# Found an interface dedicated to a local zone.
+			# Read in the real "inet" line and continue.
+			read inet ipaddr netmask mask broadcast broadaddr
+			continue;
+		fi
+
+		check_network "$mask" "$ipaddr" "$CLIENT_ADDR"
+		if [ ${NETWORK_MATCHED} -ne 0 ]; then
+			# we need to get value of ipaddr out of subprocess
+			echo $ipaddr
+			break;
+		fi
+	    done`
+
+	    if [ -z "$SERVER_ADDR" ]; then
+		warn "no interface configured for address $CLIENT_ADDR"
+	    else
+		# update server name based on newly found IP address
+		get_hostname_byaddr "$SERVER_ADDR"
+		if [ -z "$HOST_NAME" ] ; then
+			warn "No hostname found for $SERVER_ADDR"
+			SERVER=$SERVER_ADDR
+		else
+			SERVER=$HOST_NAME
+		fi
+	    fi
+	fi
+else
+	# if server address wasn't specified explicitly, resolve server name
+	if [ -z "$SERVER_ADDR" ]; then
+		get_hostaddr "$SERVER"
+		if [ -z "$HOST_ADDR" ]; then
+			echo -e "Could not resolve $SERVER"
+			cleanup_and_exit 1
+		fi
+		SERVER_ADDR=$HOST_ADDR
+	fi
+fi
+
+#
+# If install server only then make sure that the location
+# of the product directory has been specified
+#
+if [ ! -d "${SOLARIS_PROD_DIR}/Product" ] ; then
+	if [ ${PRODUCT_SERVER}"x" = "x" ]; then
+	echo -e "This system is only set up as a boot server for install clients."
+		echo -e "Use -s to specify a path to an install server."
+		cleanup_and_exit 1
+	fi
+else
+	if [ ${PRODUCT_SERVER}"x" = "x" ]; then
+		PRODUCT_SERVER=${SERVER}
+		PRODUCT_PATH=${DISTRIBUTION_DIR}
+	fi
+fi
+
+# Process the client-type-specific identification parameters (IP address and
+# ethernet address for RARP, and platform/class name and ethernet address for
+# DHCP).
+if [ "X$CLIENT_TYPE" = "XRARP" ] ; then
+	rarp_check_ipaddr
+	rarp_check_ether
+else
+	#
+	# Convert the platform name to the DHCP class form
+	#
+	if [ "X${PLATFORM_NAME}" != "X" ] ; then
+		DHCP_CLASS_NAME=`echo -e "${PLATFORM_NAME}" |sed -e 's/,/./g'`
+	fi
+
+	#
+	# Convert the Ethernet address to DHCP "default client-ID" form:
+	#    uppercase hex, preceded by the hardware
+	#    address type ("01" for ethernet)
+	#
+	if [ "X${ETHER_ADDR}" != "X" ] ; then
+		DHCP_CLIENT_ID=01`echo -e "${ETHER_ADDR}" | ${TR} '[a-z]' '[A-Z]' |
+		    awk -F: '
+			{
+			    for (i = 1; i <= 6 ; i++)
+				if (length($i) == 1) {
+				    printf("0%s", $i)
+				} else {
+				    printf("%s", $i);
+				}
+			}'`
+	fi
+fi
+
+#
+# Add the boot image directory and the products directory (if local)
+# to the exports file.
+#
+if [ "${PRODUCT_SERVER}" = "${SERVER}" ]; then
+	export_fs $PRODUCT_PATH
+fi
+
+#
+# If the boot image directory ($IMAGE_PATH) is a symlink, we must
+#    1.) export the dirname of the boot image directory (can't share a symlink)
+#    2.) export the linked directory as well.
+# else
+#    just export the boot image directory.
+#
+if [ -h ${IMAGE_PATH} ]; then
+    DIRNAME_IMAGE_PATH=`dirname ${IMAGE_PATH}`
+    export_fs ${DIRNAME_IMAGE_PATH}
+
+    SAVE_CWD=`pwd`
+    cd ${IMAGE_PATH}
+    LINKED_IMAGE_PATH=`pwd`
+    cd ${SAVE_CWD}
+    export_fs ${LINKED_IMAGE_PATH}
+
+else
+    export_fs ${IMAGE_PATH}
+fi
+
+# CLEAN file is used so rm_install_client can undo (most of) the setup
+if [ "X$CLIENT_TYPE" = "XDHCP" ] ; then
+	if [ "X$DHCP_CLASS_NAME" != "X" ] ; then
+		CLEAN="${Bootdir}/rm.${DHCP_CLASS_NAME}"
+		CLEANUP_FOR="${PLATFORM_NAME}"
+	else
+		CLEAN="${Bootdir}/rm.${DHCP_CLIENT_ID}"
+		CLEANUP_FOR="${ETHER_ADDR}"
+	fi
+else
+	CLEAN="${Bootdir}/rm.${IP_ADDR}"
+	CLEANUP_FOR="${CLIENT_NAME}"
+fi
+
+# if config file already exists, run the cleanup - before checking tftpboot
+if [ -f "${CLEAN}" ] ; then
+    # do the cleanup (of old failed stuff)
+    if [ ! -x ${TOOLS_DIR}/rm_install_client ] ; then
+        echo -e "WARNING: could not execute: ${TOOLS_DIR}/rm_install_client"
+        echo -e "  cannot clean up preexisting install client \"${CLEANUP_FOR}\""
+        echo -e "  continuing anyway"
+    else
+        echo -e "cleaning up preexisting install client \"${CLEANUP_FOR}\""
+        LOCKFILE_CREATED=
+        rm -f $LOCKFILE
+        ${TOOLS_DIR}/rm_install_client ${CLEANUP_FOR}
+        LOCKFILE_CREATED=yes
+        echo $$ > $LOCKFILE
+    fi
+fi
+
+#
+# Machines booting via tftp need inetboot files.  Determine whether
+# the one we need is in the boot file area already.  If it's not,
+# determine the size of the one we need.  Also determine a unique name
+# for the one we need.  Do the same for the network bootstrap if this
+# is an i86pc system.
+#
+diskneeded=0
+Bootfile=
+ExtraSpaceNeeded=6
+if [ "${PGRP}" != "i86pc" ]; then
+	aBootfile=${IMAGE_PATH}/platform/${PGRP}/inetboot
+	Bootfile=`tftp_file_name $aBootfile inetboot`
+else # i86pc
+	aBootfile=${IMAGE_PATH}/grub/pxegrub
+	Bootfile=`tftp_file_name $aBootfile pxegrub`
+fi
+
+space_needed=`tftp_new_file_size $aBootfile $Bootfile`
+diskneeded=`expr $diskneeded + ${space_needed} + ${ExtraSpaceNeeded}`
+
+#
+# If the user has specified a boot file name, we're going to create a symlink
+# from the inetboot file to the user specified name.  If that link already
+# exists, make sure it points to the inetboot we're going to use.
+#
+if [ "X$BOOT_FILE" != "X" ] ; then
+	if [ -h "${Bootdir}/$BOOT_FILE" -a ! -f "${Bootdir}/$BOOT_FILE" ] ; then
+		echo -e "ERROR: Specified boot file ${BOOT_FILE} already exists, but does not"
+		echo -e "       point to anything.  Use the -f option to rm_install_client to"
+		echo -e "       remove it."
+		cleanup_and_exit 1
+	fi
+
+	if [ -f "${Bootdir}/$BOOT_FILE" ] ; then
+		cmp -s "${Bootdir}/${Bootfile}" "${Bootdir}/${BOOT_FILE}"
+		if [ $? != 0 ] ; then
+			echo -e "ERROR: Specified boot file ${BOOT_FILE} already exists,"
+			echo -e "       and is of a different version than the one needed for this"
+			echo -e "       client."
+			cleanup_and_exit 1
+		fi
+	fi
+fi
+
+#
+# Create the boot file area, if not already created
+#
+if [ ! -d "${Bootdir}" ]; then
+	# see if / has the space
+	diskavail=`df -k "/" | tail -1 | awk '{print $4}'`
+	echo -e "making ${Bootdir}"
+	mkdir ${Bootdir}
+	chmod 775 ${Bootdir}
+	test ${Bootdir} = "/tftpboot" && ln -s . ${Bootdir}/tftpboot
+else
+	diskavail=`df -k "${Bootdir}" | tail -1 | awk '{print $4}'`
+fi
+if [ "${diskneeded}" -gt "${diskavail}" ] ; then
+	echo -e "Not enough space in/for ${Bootdir}"
+	echo -e "  needed: ${diskneeded}K, have: ${diskavail}K"
+	cleanup_and_exit 1
+fi
+
+
+start_nfsd_mountd
+
+##########################################################################
+# now we have gathered all the needed information, configure the server
+# part. 2 - things that are specific to this client
+
+if [ "X$CLIENT_TYPE" = "XRARP" ] ; then
+	configure_bootparams
+fi
+
+# rarpd - normally started from rc.local or equivalent
+if [ "X$CLIENT_TYPE" = "XRARP" ] ; then
+	start_rarpd_bootparamd
+fi
+
+#
+# start creating clean up file
+#
+echo -e "#!/sbin/sh" > ${CLEAN}			# (re)create it
+echo -e "# cleanup file for ${CLEANUP_FOR} - sourced by rm_install_client" \
+	>> ${CLEAN}
+# NYD turn off traps ??? probably so
+
+# install boot program (inetboot on sparc and pxegrub on x86)
+if [ ! -f ${Bootdir}/${Bootfile} ]; then
+	echo -e "copying boot file to ${Bootdir}/${Bootfile}"
+	cp ${aBootfile} ${Bootdir}/${Bootfile}
+	chmod 755 ${Bootdir}/${Bootfile}
+fi
+
+# install pxegrub menu file
+if [ "${PGRP}" = "i86pc" ]; then
+	if [ "X${DHCP_CLIENT_ID}" != "X" ]; then
+		Menufile=${Bootdir}/menu.lst.${DHCP_CLIENT_ID}
+		setup_tftp "${DHCP_CLIENT_ID}" "${Bootfile}"
+		# link nbp as well for backward compatibility
+		setup_tftp "nbp.${DHCP_CLIENT_ID}" "${Bootfile}"
+	else
+		# if no ether addr, fall back to GRUB default
+		Menufile=${Bootdir}/boot/grub/menu.lst
+		mkdir -p ${Bootdir}/boot/grub
+		setup_tftp "${DHCP_CLASS_NAME}" "${Bootfile}"
+		# link nbp as well for backward compatibility
+		setup_tftp "nbp.${DHCP_CLASS_NAME}" "${Bootfile}"
+	fi
+
+	touch ${Menufile}
+	grep "kernel /${BootLofs}/multiboot" ${Menufile} > /dev/null 2>&1
+	if [ $? != 0 ]; then
+		printf "default=0\n" > $Menufile
+		printf "timeout=30\n" >> $Menufile
+		grep min_mem64 $IMAGE_PATH/grub/menu.lst >> $Menufile
+		if [ "${CONFIG_SERVER}" ]; then
+			printf "title ${VERSION} Jumpstart\n" >> $Menufile
+		else
+			printf "title ${VERSION} ${BUILD}\n" >> $Menufile
+		fi
+
+		printf "\tkernel\$ /${BootLofs}/multiboot " >> $Menufile
+		printf "kernel/\$ISADIR/unix -B ${BARGLIST}" >> $Menufile
+		if [ "${CONFIG_SERVER}" ]; then
+			HOST_ADDR=""
+			get_hostaddr ${CONFIG_SERVER}
+			printf "install_config=" >> $Menufile
+			printf "${HOST_ADDR:-${CONFIG_SERVER}}" >> $Menufile
+			printf ":${CONFIG_PATH}," >> $Menufile
+		fi
+
+		# add sysid config and
+		if [ "${SYSID_CONFIG_SERVER}" ]; then
+			HOST_ADDR=""
+			get_hostaddr ${SYSID_CONFIG_SERVER}
+			printf "sysid_config=" >> $Menufile
+			printf "${HOST_ADDR:-${SYSID_CONFIG_SERVER}}:" \
+			     >> $Menufile
+			printf "${SYSID_CONFIG_PATH}," >> $Menufile
+		fi
+
+		# add install media path and load boot archive
+		HOST_ADDR=""
+		get_hostaddr ${PRODUCT_SERVER}
+		printf "install_media=" >> $Menufile
+		printf "${HOST_ADDR:-${PRODUCT_SERVER}}:" >> $Menufile
+		printf "${PRODUCT_PATH}" >> $Menufile
+		if [ X$dash_t_s = X"yes" ]; then
+			printf ",install_boot=" >> $Menufile
+			printf "${SERVER_ADDR}:${IMAGE_PATH}" >> $Menufile
+		fi
+		printf " $BOOT_ARGS\n" >> $Menufile
+		printf "\tmodule\$ /${BootLofs}/\$ISADIR/x86.miniroot\n" \
+		    >> $Menufile
+	fi
+
+	# prepare for cleanup action
+	if [ "X${DHCP_CLIENT_ID}" != "X" ]; then
+		printf "rm -f ${Menufile}\n" >> ${CLEAN}
+	else
+		printf "rm -rf ${Bootdir}/boot\n" >> ${CLEAN}
+	fi
+fi
+
+# Make tftpboot symlinks
+if [ "X$BOOT_FILE" != "X" ] ; then
+	# Link from the inetboot/pxegrub file to the user-specified name
+	# We don't want to use setup_tftp because we don't want
+	# to save removal commands in the cleanup file
+	ln -s ${Bootfile} ${Bootdir}/$BOOT_FILE
+
+	cat <<-EOF >>${CLEAN}
+		if [ -h "${Bootdir}/${BOOT_FILE}" -o -f "${Bootdir}/${BOOT_FILE}" ] ; then
+		    echo -e "Not removing manually specified boot file \"${BOOT_FILE}\""
+		    echo -e "because other clients may be using it.  Use the -f flag"
+		    echo -e "to rm_install_client to remove this boot file."
+		else
+		    echo -e "The inetboot file corresponding to the boot file \"${BOOT_FILE}\""
+		    echo -e "does not exist.  Deleting \"${BOOT_FILE}\"."
+		    rm -f ${Bootdir}/${BOOT_FILE}
+		fi
+	EOF
+elif [ "${PGRP}" != "i86pc" ]; then
+	if [ "X$CLIENT_TYPE" = "XDHCP" ] ; then
+		# Create links for DHCP clients
+		if [ "X$DHCP_CLASS_NAME" != "X" ] ; then
+			Tftpstring=${DHCP_CLASS_NAME}
+		else
+			Tftpstring=${DHCP_CLIENT_ID}
+		fi
+		setup_tftp "${Tftpstring}" "${Bootfile}"
+	else
+		# Create links for RARP clients
+		HEXIP=`echo $IP_ADDR | awk -F. '{
+		    IP_HEX = sprintf("%0.2x%0.2x%0.2x%0.2x", $1,$2,$3,$4)
+		    print IP_HEX
+		}' | ${TR} '[a-z]' '[A-Z]'`
+
+		HEXIPARCH=${HEXIP}.`echo ${PGRP} | ${TR} '[a-z]' '[A-Z]'`
+
+		setup_tftp ${HEXIPARCH} ${Bootfile}
+		setup_tftp ${HEXIP} ${Bootfile}
+	fi
+
+	#
+	# put final clean up commands into clean file
+	#
+	echo 'cnt=`ls -l /tftpboot | grep -w '${Bootfile}' | wc -l `' \
+							    >> ${CLEAN}
+	echo 'if [ ${cnt} -eq 1 ]; then' >> ${CLEAN}
+	echo -e "    echo \"removing /tftpboot/${Bootfile}\"" >> ${CLEAN}
+	echo -e "    rm /tftpboot/${Bootfile}" >> ${CLEAN}
+	echo -e "fi" >> ${CLEAN}
+fi
+
+#
+# If this was a DHCP client (or x86 with boot floppy),
+# we need to tell user what to add to do.
+#
+if [ "${PGRP}" = "i86pc" ]; then
+	echo
+	if [ "X${CLIENT_TYPE}" = "XDHCP" ] ; then
+		# If x86, print out how to define the DHCP Macro
+		dhcpmacro=${DHCP_CLIENT_ID:='PXEClient:Arch:00000:UNDI:002001'}
+		echo -e "If not already configured, enable PXE boot by creating"
+		echo -e "a macro named ${dhcpmacro} with:"
+		echo -e "  Boot server IP (BootSrvA) : ${SERVER_ADDR}"
+		if [ "X${BOOT_FILE}" != "X" ] ; then
+			echo -e "  Boot file      (BootFile) : ${BOOT_FILE}"
+		elif [ "X${DHCP_CLIENT_ID}" != \
+		    "XPXEClient:Arch:00000:UNDI:002001" ] ; then
+			echo -e "  Boot file      (BootFile) : ${DHCP_CLIENT_ID}"
+		else
+			echo -e "  Boot file      (BootFile) : ${DHCP_CLASS_NAME}"
+		fi
+	else
+		# non dhcp, requires floppy
+		echo -e "Create a grub floppy and edit GRUB menu to contain"
+		echo -e "the following entry:"
+		grep min_mem64 $IMAGE_PATH/grub/menu.lst
+		echo -e "title Solaris netinstall"
+		echo -e "  rarp"
+		printf "  kernel\$ /${BootLofs}/multiboot kernel/\$ISADIR/unix -B "
+		PRODUCT_SERVER_IP=`name_to_ip_addr ${PRODUCT_SERVER}`
+		printf "${BARGLIST}install_media="
+		printf "${PRODUCT_SERVER_IP:-${PRODUCT_SERVER}}:"
+		printf "${PRODUCT_PATH}"
+		if [ X$dash_t_s = X"yes" ]; then
+			printf ",install_boot=${SERVER_ADDR}:${IMAGE_PATH}"
+		fi
+		printf " $BOOT_ARGS\n" >> $Menufile
+		echo -e "  module\$ /${BootLofs}/\$ISADIR/x86.miniroot"
+	fi
+elif [ "X${CLIENT_TYPE}" = "XDHCP" ] ; then
+	echo
+	if [ "${DHCP_CLASS_NAME}" ] ; then
+		MACRO_NAME=${PLATFORM_NAME}
+	else
+		MACRO_NAME=${DHCP_CLIENT_ID}
+	fi
+
+	echo -e "To enable ${MACRO_NAME} in the DHCP server, ensure that"
+	echo -e "the following Sun vendor-specific options are defined"
+	echo -e "(SinstNM, SinstIP4, SinstPTH, SrootNM, SrootIP4,"
+	echo -e "SrootPTH, and optionally SbootURI, SjumpCF and SsysidCF),"
+	echo -e "and add a macro to the server named ${MACRO_NAME},"
+	echo -e "containing the following option values:"
+
+	echo
+	echo -e "  Install server      (SinstNM)  : ${PRODUCT_SERVER}"
+	echo -e "  Install server IP   (SinstIP4) :" \
+					`name_to_ip_addr ${PRODUCT_SERVER}`
+	echo -e "  Install server path (SinstPTH) : ${PRODUCT_PATH}"
+	echo -e "  Root server name    (SrootNM)  : ${SERVER}"
+	echo -e "  Root server IP      (SrootIP4) : ${SERVER_ADDR}"
+	echo -e "  Root server path    (SrootPTH) : ${IMAGE_PATH}"
+
+	if [ "X${BOOT_FILE}" != "X" ] ; then
+		echo -e "  Boot file           (BootFile) : ${BOOT_FILE}"
+	elif [ "X${DHCP_CLIENT_ID}" != "X" ] ; then
+		echo -e "  Boot file           (BootFile) : ${DHCP_CLIENT_ID}"
+	fi
+
+	# If Jumpstart server was specified, print it out.
+	if [ "X${CONFIG_SERVER}" != "X" ] ; then
+		echo -e "  Profile location    (SjumpsCF) : ${CONFIG_SERVER}:${CONFIG_PATH}"
+	fi
+	# If sysidcfg server was specified, print it out.
+	if [ "X${SYSID_CONFIG_SERVER}" != "X" ] ; then
+		echo -e "  sysidcfg location   (SsysidCF) : ${SYSID_CONFIG_SERVER}:${SYSID_CONFIG_PATH}"
+	fi
+fi
+
+cleanup_and_exit 0
