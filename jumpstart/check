@@ -1,0 +1,35 @@
+#!/bin/bash
+#
+# This script is used to check for the rules file.  Strip the rules file of all
+# blank lines, and compute a checksum.  The output that stripped file into a
+# rules.ok file in the same directory as the rules file.
+#
+
+rulesFile="./rules"
+while [[ ! -f $rulesFile ]]
+do
+  echo -e "The rules file: $rulesFile, does not exist."
+  echo -e "Where is the rules file located? [] \c"
+  read rulesFile
+done
+
+sumBin=$(which sum)
+if [[ -z $t || ! -f $t ]]
+then
+  echo -e "You need to install a 'sum' tool."
+  echo -e "If you have a sum tool installed, then fix your path, and try this again"
+fi
+
+sed '/^$/d; /^#/d; /^\s/d' $rulesFile > ${rulesFile}.ok
+sum=$($sumBin ${rulesFile}.ok | awk '{print $1}')
+if [[ $sum = 0 ]]
+then
+  echo -e "For some reason your rules.ok file is blank.  You will want to"
+  echo -e "look into this issue."
+  echo -e "Ensure that all comments start the line with a '#'."
+  echo -e "There should be no blank lines."
+  echo -e "There should be no lines starting with a space."
+  exit 100
+fi
+
+echo -e "# version=2 checksum=$sum" >> ${rulesFiles}.ok
