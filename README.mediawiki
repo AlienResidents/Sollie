@@ -4,3 +4,10 @@ Most of the code is from long, long ago, so it's probably pretty shit.
 
 I'll be fixing it up, but feel free to point out the shit bits before I get to
 them.
+
+
+packaging:
+ This is where I keep my solaris package creation tool(s).
+
+jumpstart:
+ This be where I keep me goodies for jumpin solaris boxes, yar!!
