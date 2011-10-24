@@ -1,0 +1,329 @@
+Installation of an Oracle T3-4 server with the following resources:
+	CPUs=4
+	Memory=256GB
+	1x control domain
+	2x IO domains
+	2x service domains
+
+
+Setup our environment:
+	JUMPSTART_SERVER_OS="Centos 5.7 (final)"
+	JUMPSTART_SERVER_SHELL="/bin/bash"
+	JUMPSTART_SERVER_USER="root"
+	JUMPSTART_SERVER_IP_ADDRESSES_AND_NETMASKS="172.16.66.2:255.255.254.0,172.16.66.22:255.255.0.0"
+	export PATH=~/bin:/bin:/usr/bin:/sbin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/usr/xpg4/bin
+	baseDir="/solaris"
+	configDir="$baseDir/jumpstart"
+	sysidcfgBaseDir="$configDir/sysidcfg"
+	profileFile="$configDir/profile"
+	rulesFile="$configDir/rules"
+	rulesOkFile="$configDir/rules.ok"
+	bootBaseDir="$baseDir/boot"
+	bootDir="$bootBaseDir/Solaris_10/Tools/Boot"
+	installDir="$baseDir/sparc_10"
+	dvdBaseDir="/mnt"
+	dvdToolsDir="$dvdBaseDir/Solaris_10/Tools"
+	# Due to the nature of the network I chose, solaris 10 just wants to use classful addressing instead of variable length subnet masks (classless addressing).  I guess they're still using their old CCNA books!
+	dnsDomain="example.com"
+	dnsSearchDomains="example.com,example.net,example.org"
+	networkAddress='172.16.0.0'
+	networkAddress2='172.16.66.0'
+	networkNetmask='255.255.0.0'
+	networkNetmask2='255.255.254.0'
+	networkBroadcast='172.16.255.255'
+	networkBroadcast2='172.16.67.255'
+	jumpstartServerIP='172.16.66.22'
+	jumpstartServerIP2='172.16.66.2'
+	jumpstartPrimaryIP='172.16.66.24'
+	jumpstartPrimaryArch="sun4v"
+	jumpstartPrimaryHostname="emp-ldom01"
+	sysidcfgDirPrimary="$sysidcfgBaseDir/$jumpstartPrimaryHostname"
+	sysidcfgFilePrimary="$sysidcfgDirPrimary/sysidcfg"
+	jumpstartSecondaryIP='172.16.66.25'
+	jumpstartSecondaryArch="sun4v"
+	jumpstartSecondaryHostname="emp-ldom02"
+	sysidcfgDirSecondary="$sysidcfgBaseDir/$jumpstartSecondaryHostname"
+	sysidcfgFileSecondary="$sysidcfgDirSecondary/sysidcfg"
+	defaultRouter='172.16.67.254'
+	users="user1 user2 user3"
+
+Download and Copy the Solaris 10 ISO to the jumpstart server:
+	http://www.oracle.com/technetwork/server-storage/solaris/downloads/index.html?ssSourceSiteId=ocomen
+	scp ~/Desktop:sol-10-u10-ga2-sparc-dvd.iso root@$jumpstartServerIP:
+
+Determine the MAC address of the interface you'll be using:
+	OBP:
+		show-nets # Select the proper device (built-in nic0). I had to try every one, and it just happened to literally be the last in the list for the first built-in 1Gbe NIC, and that MAC address is also in the OBP banner.
+		select ctrl-y # ensure you have a link, and if not try again with another device
+		.properties # get the MAC address of the interface
+		jumpstartPrimaryMacAddress='00:21:28:D2:99:C6'
+		nvalias net ctrl-y # ctrl-y is copied into the ctrl-y buffer. This is optional, but also makes it easier in the future
+		printenv nvramrc # Ensure that it's in the nvramrc
+
+Build Jumpstart server:
+	Setup /etc/hosts:
+		echo -e "$jumpstartPrimaryIP $jumpstartPrimaryHostname" >> /etc/hosts
+		echo -e "$jumpstartPrimaryMacAddress $jumpstartPrimaryHostname" >> /etc/ethers
+	Create the and populate install, boot, and config directories:
+		mount the Solaris 10 ISO:
+			mkdir -p $dvdBaseDir
+			mount -o loop,ro ~/sol-10-u10-ga2-sparc-dvd.iso $dvdBaseDir
+		Download the altered scripts that work on linux:
+			cd ~/bin
+			wget https://raw.github.com/AlienResidents/Sollie/master/jumpstart/add_install_client
+			wget https://raw.github.com/AlienResidents/Sollie/master/jumpstart/rm_install_client
+			wget https://raw.github.com/AlienResidents/Sollie/master/jumpstart/setup_install_server
+			wget https://raw.github.com/AlienResidents/Sollie/master/jumpstart/check
+		setup_install_server -p $dvdToolsDir -b $bootDir
+		add_install_client -t $jumpstartServerIP2:$bootDir -s $jumpstartServerIP2:$installDir -c $jumpstartServerIP2:$configDir -p $jumpstartServerIP2:$sysidcfgDirPrimary $jumpstartPrimaryHostname.$dnsDomain $jumpstartPrimaryArch
+		mkdir -p $installDir
+		Populate the primary sysidcfg: # The root password is: sun123
+			echo -e 'auto_reg=disable
+System_locale=en_US
+name_service=DNS {
+                  domain_name=$dnsDomain
+                  name_server=$jumpstartServerIP2
+                  search=$dnsSearchDomain
+                 }
+timezone=Australia/Brisbane
+timeserver=localhost
+network_interface=igb0{
+                       ip_address=$jumpstartPrimaryIP
+                       default_route=$defaultRouter
+                       netmask=$networkNetmask2
+                       protocol_ipv6=no
+                      }
+security_policy=NONE
+nfs4_domain=dynamic
+root_password=TREEe.dpomBBE
+system_locale=C
+terminal=vt100' > $sysidcfgFilePrimary
+		Populate the profile:
+			echo -e 'install_type    initial_install
+system_type     standalone
+
+partitioning    explicit
+pool pool001 auto 4G 4G mirror any any
+bootenv installbe bename newBE
+
+cluster SUNWCreq
+package SUNWPython
+package SUNWi15rf
+package SUNWxwplt
+package SUNWbash
+package SUNWopensslr
+package SUNWopenssl-commands
+package SUNWopenssl-man
+package SUNWbindr
+package SUNWbind
+package SUNWbindS
+package SUNWdoc
+package SUNWman
+package SUNWxwfnt
+package SUNWxwice
+package SUNWxwrtl
+package SUNWxwplr
+package SUNWxwopt
+package SUNWsshr
+package SUNWsshcu
+package SUNWuiu8
+package SUNWsshu
+package SUNWsshdr
+package SUNWsshdu
+package SUNWtoo
+package SUNWinst
+package SUNWxcu4
+package SUNWeurf
+package SUNWgnome-base-libs-root
+package SUNWxi18n' > $profile
+
+	Install the required programs:
+	yum install xinetd tftp-server tftp bootparamd rarpd nfs-server
+	Configure the NFS exports:
+		echo -e "$baseDir *(ro,async,no_wdelay,no_root_squash)" >> /etc/exports
+	Enable tftp-server:
+		perl -p -i -e 's/^(.*=.*)(yes)/$1no/' /etc/xinetd.d/tftp
+	service xinetd restart
+	service nfsd restart
+	service bootparamd restart
+	service rarpd restart
+	
+
+Jumpstart the Primary:
+	Console OBP:
+		boot net -v install
+
+Allow root for ssh: # as root on the primary from the console
+	perl -p -i -e 's/^PermitRootLogin.*$/PermitRootLogin yes/' /etc/ssh/sshd_config
+	svcadm restart ssh
+
+Disable all those stupid fucking services on the primary:
+	svcadm disable svc:/application/stosreg:default
+	svcadm disable svc:/network/security/ktkt_warn:default
+	svcadm disable svc:/network/rpc/rusers:default
+	svcadm disable svc:/network/rpc/rstat:default
+	svcadm disable svc:/network/rpc/gss:default
+	svcadm disable svc:/network/nfs/rquota:default
+	svcadm disable svc:/network/stdiscover:default
+	svcadm disable svc:/network/stlisten:default
+	svcadm disable svc:/network/telnet:default
+	svcadm disable svc:/network/shell:default
+	svcadm disable svc:/network/login:rlogin
+	svcadm disable svc:/network/ftp:default
+	svcadm disable svc:/network/finger:default
+	svcadm disable svc:/application/x11/xfs:default
+	svcadm disable svc:/network/routing-setup:default
+	svcadm disable svc:/network/shares/group:default
+	svcadm disable svc:/network/ipsec/policy:default
+	svcadm disable svc:/network/ipsec/ipsecalgs:default
+	svcadm disable svc:/system/patchchk:default
+	svcadm disable svc:/system/name-service-cache:default
+	svcadm disable svc:/system/pkgserv:default
+	svcadm disable svc:/network/iscsi/initiator:default
+
+Fix the filesystems on primary:
+	zfs destroy pool001/export/home
+	zfs destroy pool001/export
+
+Create local users:
+	for i in $users
+	do
+		/usr/sbin/useradd -d /home/$i -m -s /usr/bin/bash $i
+	done
+
+Install OVM Server Sparc 2.1
+	scp Oracle_VM_SPARC-2.1.zip $jumpstartPrimaryHostname:/tmp/
+	cd /tmp
+	unzip Oracle_VM_SPARC-2.1.zip
+	cd OVM_Server_SPARC-2_1/Install
+	./install-ldm # select n (no) for the prompt "Select an option for configuration:".
+
+Configure the primary LDOM:
+	ldm add-vcc port-range=5000-5100 primary-vcc0 primary
+	echo "$networkAddress2 $networkNetmask2" >> /etc/netmasks
+	ldm add-vsw net-dev-e1000g8 vsw01-mgmt primary
+	echo -e "$jumpstartPrimaryHostname netmask + broadcast + up" > /etc/hostname.vsw0
+	rm /etc/hostname.e1000g8
+	ifconfig e1000g8 down
+	ifconfig e1000g8 unplumb
+	ifconfig vsw0 plumb
+	ifconfig vsw0 $(cat /etc/hostname.vsw0)
+	ldm add-vds primary-vds0 primary
+	ldm set-vcpu 1 primary # Just to make sure all threads are on the same core
+	ldm set-vcpu 2 primary # Just to make sure all threads are on the same core
+	ldm set-vcpu 4 primary # Just to make sure all threads are on the same core
+	ldm set-vcpu 8 primary # Just to make sure all threads are on the same core
+	ldm start-reconf primary
+	ldm set-vcpu -c 1 primary # Just to make sure all threads are on the same core
+	ldm set-mau 1 primary
+	ldm set-mem 4g primary
+	ldm add-vsw net-dev=igb0 vsw0-mgmt primary
+	ldm rm-io pci_1 primary
+	ldm rm-io pci_3 primary
+	ldm rm-io niu_1 primary
+	ldm rm-io niu_3 primary
+	shutdown -i 6 -g 0 -y
+
+Configure the secondary LDOM (from the primary console):
+	ldm add-domain secondary
+	ldm add-vsw net-dev-e1000g8 vsw02-mgmt secondary
+	ldm add-vds secondary-vds0 secondary
+	ldm set-vcpu 1 secondary # Just to make sure all threads are on the same core
+	ldm set-mau 1 secondary
+	ldm add-io pci_1 secondary
+	ldm add-io pci_3 secondary
+	ldm add-io niu_1 secondary
+	ldm add-io niu_3 secondary
+	ldm bind secondary
+	ldm add-cpu 1 secondary # Just to make sure all threads are on the same core
+	ldm add-cpu 1 secondary # Just to make sure all threads are on the same core
+	ldm add-cpu 1 secondary # Just to make sure all threads are on the same core
+	ldm add-cpu 1 secondary # Just to make sure all threads are on the same core
+	ldm add-cpu 1 secondary # Just to make sure all threads are on the same core
+	ldm add-cpu 1 secondary # Just to make sure all threads are on the same core
+	ldm add-cpu 1 secondary # Just to make sure all threads are on the same core
+	ldm unbind secondary # can't establish whole-core constraints while bound
+	ldm set-vcpu -c 1 secondary
+	ldm bind secondary
+	ldm set-var auto-boot\?=false secondary
+
+Starting the secondary domain:
+	svcadm enable vntsd
+	ldm start secondary
+	telnet localhost 5000
+
+Jumpstart Secondary:
+	Determine the MAC address of the interface you'll be using:
+		OBP:
+			show-nets # Select the proper device (built-in nic1).
+			select ctrl-y # ensure you have a link, and if not try again with another device
+			.properties # get the MAC address of the interface
+			jumpstartSecondaryMacAddress='00:21:28:D2:99:C6' # for this instance
+			nvalias net ctrl-y # ctrl-y is copied into the ctrl-y buffer. This is optional, but also makes it easier in the future
+			printenv nvramrc # Ensure that it's in the nvramrc
+	Populate the secondary sysidcfg: # The root password is: sun123
+		echo -e 'auto_reg=disable
+System_locale=en_US
+name_service=DNS {
+                  domain_name=$dnsDomain
+                  name_server=$jumpstartServerIP2
+                  search=$dnsSearchDomain
+                 }
+timezone=Australia/Brisbane
+timeserver=localhost
+network_interface=igb0{
+                       ip_address=$jumpstartSecondaryIP
+                       default_route=$defaultRouter
+                       netmask=$networkNetmask2
+                       protocol_ipv6=no
+                      }
+security_policy=NONE
+nfs4_domain=dynamic
+root_password=TREEe.dpomBBE
+system_locale=C
+terminal=vt100' > $sysidcfgFileSecondary
+	Jumpstart secondary:
+		ssh $jumpstartServerIP
+		add_install_client -t $jumpstartServerIP2:$bootDir -s $jumpstartServerIP2:$installDir -c $jumpstartServerIP2:$configDir -p $jumpstartServerIP2:$sysidcfgDirSecondary $jumpstartSecondaryHostname.$dnsDomain $jumpstartSecondaryArch
+
+Allow root for ssh: # as root on the secondary from the console
+	perl -p -i -e 's/^PermitRootLogin.*$/PermitRootLogin yes/' /etc/ssh/sshd_config
+	svcadm restart ssh
+
+Disable all those stupid fucking services on the secondary:
+	svcadm disable svc:/application/stosreg:default
+	svcadm disable svc:/network/security/ktkt_warn:default
+	svcadm disable svc:/network/rpc/rusers:default
+	svcadm disable svc:/network/rpc/rstat:default
+	svcadm disable svc:/network/rpc/gss:default
+	svcadm disable svc:/network/nfs/rquota:default
+	svcadm disable svc:/network/stdiscover:default
+	svcadm disable svc:/network/stlisten:default
+	svcadm disable svc:/network/telnet:default
+	svcadm disable svc:/network/shell:default
+	svcadm disable svc:/network/login:rlogin
+	svcadm disable svc:/network/ftp:default
+	svcadm disable svc:/network/finger:default
+	svcadm disable svc:/application/x11/xfs:default
+	svcadm disable svc:/network/routing-setup:default
+	svcadm disable svc:/network/shares/group:default
+	svcadm disable svc:/network/ipsec/policy:default
+	svcadm disable svc:/network/ipsec/ipsecalgs:default
+	svcadm disable svc:/system/patchchk:default
+	svcadm disable svc:/system/name-service-cache:default
+	svcadm disable svc:/system/pkgserv:default
+	svcadm disable svc:/network/iscsi/initiator:default
+
+Fix the network interface:
+	echo -e "$jumpstartSecondaryHostname netmask + broadcast + up" > /etc/hostname.vsw0
+	rm /etc/hostname.e1000g0
+	ifconfig e1000g0 down
+	ifconfig e1000g0 unplumb
+	ifconfig vsw0 plumb
+	ifconfig vsw0 $(cat /etc/hostname.vsw0)
+
+Fix up the filesystems on secondary:
+	zfs destroy pool001/export/home
+	zfs destroy pool001/export
+
+Upgrade system firmware
