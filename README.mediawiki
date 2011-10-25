@@ -11,3 +11,9 @@ packaging:
 
 jumpstart:
  This be where I keep me goodies for jumpin solaris boxes, yar!!
+
+zones:
+ Scripts for Solaris 10 zones.
+
+ldom:
+ Scripts for various functions with LDOMs (Logical DOMains) / OVMs (Oracle Virtual Machines).
