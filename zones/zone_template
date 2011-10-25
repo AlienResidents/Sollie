@@ -1,0 +1,19 @@
+create
+	set zonepath=/data/ZONE_NAME
+	set autoboot=true
+	add fs
+		set dir=/data
+		#Nset special=/dev/dsk/c0t0d0s4
+		#Nset raw=/dev/rdsk/c0t0d0s4
+		#Mset special=/dev/md/dsk/d40
+		#Mset raw=/dev/md/rdsk/d40
+		set type=ufs
+		add options [logging]
+	end
+	add net
+		set physical=NET_DEVICE
+		set address=IP_ADDRESS
+	end
+	verify
+	commit
+exit
