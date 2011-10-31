@@ -26,7 +26,8 @@ use vars qw(%request %preInstall %postInstall %pkg %tar %rm @bits $USAGE
 );
 
 $USAGE = "
-$0 <tarball>
+$0 -f <tarball>
+$0 <directory>
 ";
 
 if ($#ARGV lt 0) {
@@ -136,7 +137,8 @@ if (-f $arg) {
   $tar{method} = "tarball";
   $pkg{name} = basename($tar{file});
   if (compare($tar{file}, "$baseDir/" . basename($tar{file})) != 0) {
-    copy($tar{file}, "$baseDir/",) or die "Copy failed:\n$!\n";
+    mkpath $baseDir or die "The base directory \"$baseDir\" could not be made.\n$!\n";
+    copy($tar{file}, "$baseDir/",) or die "1: Copy failed:\n$!\n";
   }
   $tar{file} = "$baseDir/" . basename($tar{file});
 } elsif (-d $arg) {
@@ -163,17 +165,6 @@ if ($tar{method} eq 'tardir') {
 } elsif ($tar{method} eq 'tarfile') {
   chdir dirname($tar{file});
 }
-
-print "What should the package name prefix be (no spaces)? eg:
-ALIENopenssl
-This would represent an openssl package that has the prefix of 'ALIEN'
-";
-chomp($pkg{prefix} = uc(<STDIN>));
-if ($pkg{prefix} =~ m/[^A-z|^0-9]/) {
-  die "The package name prefix can only contain letters, or numbers\n";
-}
-$pkg{name} = "$pkg{prefix}$pkg{name}";
-
 
 %request = getScript('request');
 %preInstall = getScript('preinstall');
