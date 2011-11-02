@@ -17,7 +17,7 @@ use File::Path;
 
 $| = 1;
 my $tmpdir = "/tmp/bldcat.$$.$^T";
-my ($deptmp,$status,$pkgname, @pkgdirs);
+my ($deptmp,$status,$pkgname, @pkgdirs, @stats);
 my ($description,$common,$version,$package,$pkgfile,$hash,$size,$deps,$category);
 my %oldcatalog;
 my %olddescriptions;
@@ -57,14 +57,22 @@ foreach my $pkgdir (@pkgdirs) {
         next;
       }
       my @line = split /\s+/;
-      my $common = $line[0];
+      my @common = split(/\s/, $line[0]);
       $olddescriptions{$common} = $_;
     }
   }
   $pkgdir =~ s/\/$//;
   foreach my $file (glob "$pkgdir/*") {
-    my $isPkg = qx/file $file/;
     ($common,$version,$package,$pkgfile,$hash,$size,$deps,$category) = ("","","","","","","","");
+
+    print "Inspecting $file\n";
+
+    my $wasGzipped = 1;
+    @stats = stat($file);
+    $size = (stat($file))[7];
+    ($file =~ /\.gz$/ ? qx/\/bin\/gzip -d $file/ : ($wasGzipped = 1));
+    $file =~ s/\.gz$//;
+    my $isPkg = qx/file $file/;
     next unless (-r $file);    # must be a readable file
     next unless ($isPkg =~ /pkg Datastream/);  # must look like a package
 
@@ -83,44 +91,59 @@ foreach my $pkgdir (@pkgdirs) {
       next;
     }
 
-    print "Inspecting $file\n";
-
     # unpack package
     if (! -d "$tmpdir") {
       mkpath $tmpdir || die "Could not create directory $tmpdir: $!\n";
     }
 
-    my $gzipped = 0;
-    ($file =~ /\.gz$/ ? qx/\/bin\/gzip -d $file/ : ()) and $gzipped = 1;
     open(DECOMPRESSED, '<', $file) or die "Can't open $file:\n$!\n";
-    $file =~ s/\.gz//;
     my $count = 0;
-    my $pkginfo = "";
+    my @pkginfo;
+    my $inPkginfo;
     my $line;
     my $in = 0;
+    my $inHeader = 0;
     while ($line = <DECOMPRESSED>) {
-      if ($line =~ m/pkginfo/) {
-        $in = 1;
-      } elsif ($count == 1) {
-        chomp($line);
-        $pkgname = $line;
-        $pkgname =~ s/ .*$//g;
-      } elsif ($in == 1 && $line =~ m/[0-9|a-f]{110,}/) {
+      chomp($line);
+      if ($line eq "# PaCkAgE DaTaStReAm") {
+        $inHeader = 1;
+        $count++;
+        next;
+      }
+      if ($line eq "# end of header") {
+        $inHeader = 0;
+        $count++;
+        next;
+      }
+      if ($inHeader) {
+        my @temp = split(/\s/, $line);
+        $pkgname = $temp[0];
+        $count++;
+        next;
+      }
+      if ($line =~ /$pkgname\/pkginfo/) {
+        $inPkginfo = 1;
+        $line =~ s/^.*$pkgname\/pkginfo//g;
+      } elsif ($inPkginfo == 1 && $line =~ /$pkgname\/pkgmap/) {
+        $count++;
         last;
-      } elsif ($in == 1) {
-        $pkginfo .= $line;
+      }
+      if ($inPkginfo) {
+        push(@pkginfo, $line);
       }
       $count++;
     }
     close(DECOMPRESSED);
-    if ($gzipped == 1) {
+    if ($wasGzipped) {
       qx/gzip $file/;
     }
-    if (! -d "$tmpdir/$pkgname") {
+    if (!-d "$tmpdir/$pkgname") {
       mkpath "$tmpdir/$pkgname" || die "Could not create directory $tmpdir/$pkgname: $!\n";
     }
     open(PKGINFO, '>', "$tmpdir/$pkgname/pkginfo") or die "Can't open $tmpdir/$pkgname/pkginfo:\n$!\n";
-      print PKGINFO $pkginfo;
+      foreach my $info (@pkginfo) {
+        print PKGINFO "$info\n";
+      }
     close(PKGINFO);
 
     open (FILE, '<', "$tmpdir/$pkgname/pkginfo") || die "Could not open $tmpdir/$pkgname/pkginfo: $!";
@@ -131,18 +154,20 @@ foreach my $pkgdir (@pkgdirs) {
       if ($line =~ /^NAME=/) {
         $common = $line;
         $common =~ s/^[A-Z]+=//;
+        $description = $common;
+        $common =~ s/\s.*$//;
         next;
       }
 
       # field 2: version
       if ($line =~ /^VERSION=/) {
-        ($version) = ($line =~ /=(.+)$/);
+        ($version) = ($line =~ /^[A-Z][A-Z]*=(.+)$/);
         next;
       }
 
       # field 3: package name
       if ($line =~ /^PKG=/) {
-        ($package) = ($line =~ /=(.+)$/);
+        ($package) = ($line =~ /^[A-Z][A-Z]*=(.+)$/);
         next;
       }
 
@@ -155,9 +180,10 @@ foreach my $pkgdir (@pkgdirs) {
       # Already computed
 
       # field 6: file size
-      if (! $size) {
-        $size = (stat($file))[7];
-      }
+      # $size
+
+      # field 7: Dependancies
+      #
 
       # field 8: categories
       if ($line =~ /^CSW_CATEGORY=/) {
@@ -190,7 +216,8 @@ foreach my $pkgdir (@pkgdirs) {
 
     $deps = "none" unless $deps;
     $category = "none" unless $category;
-    print CATALOG_NEW "$common $version $package $pkgfile $hash $size $deps $category\n";
+    print CATALOG_NEW "$common $version $pkgname $pkgfile $hash $size $deps $category\n";
+    print DESCRIPTIONS_NEW "$description\n";
   }
   close CATALOG;
   unlink "$pkgdir/descriptions";      # May or may not be there
