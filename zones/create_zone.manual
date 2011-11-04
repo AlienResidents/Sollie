@@ -6,8 +6,8 @@ $0 <ZONE NAME>
 
 alias zonecfg="/usr/sbin/zonecfg"
 alias zoneadm="/usr/sbin/zoneadm"
-domainname=`domainname` || domainname=`cat /etc/defaultdomain`
-if [ -z "$1" ]
+domainname=$(domainname) || domainname=$(cat /etc/defaultdomain)
+if [[ -z $1 ]]
 then
 	echo -e "$USAGE"
 	exit 69
@@ -15,7 +15,7 @@ fi
 zone_name="$1"
 zone_config_file="$zone_name"
 
-if [ -s "$zone_config_file" ]
+if [[ -s "$zone_config_file" ]]
 then
 	echo -e "Creating zone '$zone_name'... \c"
 	zonecfg -z $zone_name -f $zone_config_file
@@ -27,23 +27,23 @@ else
 	echo -e "The zone configuration file '$zone_config_file' does not exist."
 	echo -e "Should I create this file now? ( y | n )  [y]: \c"
 	read create_now
-	create_now=`echo $create_now | tr [:upper:] [:lower:]`
-	if [ "$create_now" = "y" ] || [ "$create_now" = "" ]
+	create_now=$(echo $create_now | tr [:upper:] [:lower:])
+	if [[ "$create_now" = "y" || "$create_now" = "" ]]
 	then
-		if [ -s "zone_template" ]
+		if [[ -s "zone_template" ]]
 		then
 			echo -e "There is a existing zone template file.  Do you want to use this template file? ( y | n ) [y]: \c"
 			read use_template
 		fi
-		use_template=`echo $use_template | tr [:upper:] [:lower:]`
-		if [ "$use_template" = "y" ] || [ "$use_template" = "" ]
+		use_template=$(echo $use_template | tr [:upper:] [:lower:])
+		if [[ "$use_template" = "y" || "$use_template" = "" ]]
 		then
 			# NET_DEVICE
-			while [ -z $net_device ]
+			while [[ -z $net_device ]]
 			do
-				interfaces=`netstat -ni|grep [0-9]|egrep -v ^lo|awk '{print $1}'`
-				num_interfaces=`echo $interfaces | awk '{print NF}'`
-				if [ "$num_interfaces" = "1" ]
+				interfaces=$(netstat -ni|grep [0-9]|egrep -v ^lo|awk '{print $1}')
+				num_interfaces=$(echo $interfaces | wc -w)
+				if [[ $num_interfaces -eq 1 ]]
 				then
 					net_device=$interfaces
 				else
@@ -52,11 +52,11 @@ else
 					echo -e "Choose: \c"
 					read net_device
 				fi
-				if [ -z "$net_device" ]
+				if [[ -z $net_device ]]
 				then
 					echo -e "You must choose a valid network device."
 					unset net_device
-				elif `echo $net_device |grep $interfaces` ]
+				elif [[ ! $(echo -e $interfaces | grep $net_device) ]]
 				then
 					echo -e "$net_device is not a valid network device."
 					echo -e "You must choose a valid network device."
@@ -66,9 +66,9 @@ else
 			echo -e "Selected $net_device for $zone_name's physical interface."
 
 			# IP_ADDRESS
-			in_dns=`dig $zone_name.$domainname|egrep ^$zone_name | awk '{print $5}'`
+			in_dns=$(dig $zone_name.$domainname|egrep ^$zone_name | awk '{print $5}')
 			# dig $zone_name.$domainname|egrep ^$zone_name
-			if [ -n "$in_dns" ]
+			if [[ -n "$in_dns" ]]
 			then
 				ip_address=$in_dns
 			else
@@ -82,8 +82,8 @@ else
 			sed "s/ZONE_NAME/$zone_name/g; s/NET_DEVICE/$net_device/g; s/IP_ADDRESS/$ip_address/g; s%RAW_DATA_DEVICE%$raw_data_device%g; s%DATA_DEVICE%$data_device%g;" zone_template > $zone_config_file.temp
 
 			# DATA_DEVICE
-			use_lvm=`df -h | egrep -e '\/dev\/md'` || use_lvm="no"
-			if [ "$use_lvm" = "no" ]
+			use_lvm=$(df -h | egrep -e '\/dev\/md') || use_lvm="no"
+			if [[ "$use_lvm" = "no" ]]
 			then
 				sed 's/#Nset /set /g' $zone_config_file.temp > $zone_config_file
 				rm $zone_config_file.temp
@@ -94,14 +94,14 @@ else
 		else
 			vi $zone_config_file
 		fi
-		if [ -s $zone_config_file ]
+		if [[ -s $zone_config_file ]]
 		then
 			echo -e "Creating zone..."
 		  zonecfg -z $zone_name -f $zone_config_file
 			echo -e "Done"
 		else
 			echo -e "The zone configuration file is empty, so I'm quitting, and getting rid of the empty file... \c"
-			if [ -f "$zone_config_file" ]
+			if [[ -f "$zone_config_file" ]]
 			then
 				rm $zone_config_file
 			fi
@@ -115,8 +115,8 @@ fi
 
 echo -e "Create $zone_name now? ( y | n ) [y] : \c"
 read build_now
-build_now=`echo $build_now | tr [:upper:] [:lower:]`
-if [ -z "$build_now" ] || [ "$build_now" = "y" ]
+build_now=$(echo $build_now | tr [:upper:] [:lower:])
+if [[ -z "$build_now" || "$build_now" = "y" ]]
 then
 	echo -e "Creating /zones/$zone_name... \c"
 	mkdir -p /zones/$zone_name
