@@ -13,7 +13,7 @@ then
 	exit 69
 fi
 zone_name="$1"
-zone_config_file=".$zone_name"
+zone_config_file="$zone_name"
 
 if [ -s "$zone_config_file" ]
 then
@@ -118,12 +118,12 @@ read build_now
 build_now=`echo $build_now | tr [:upper:] [:lower:]`
 if [ -z "$build_now" ] || [ "$build_now" = "y" ]
 then
-	echo -e "Creating /data/$zone_name... \c"
-	mkdir -p /data/$zone_name
+	echo -e "Creating /zones/$zone_name... \c"
+	mkdir -p /zones/$zone_name
 	echo -e "Done."
 
-	echo -e "Setting permissions to 700 for /data/$zone_name... "
-	chmod 700 /data/$zone_name
+	echo -e "Setting permissions to 700 for /zones/$zone_name... "
+	chmod 700 /zones/$zone_name
 	echo -e "Done."
 
 	echo -e "Installing Zone..."
@@ -131,21 +131,21 @@ then
 	echo -e "Done installing zone $zone_name."
 
 	echo -e "Modifying files for automated booting of $zone_name..."
-	echo "$zone_name" > /data/$zone_name/root/etc/nodename
+	echo "$zone_name" > /zones/$zone_name/root/etc/nodename
 	echo -e "	/etc/defaultdomain"
-	cp /etc/defaultdomain /data/$zone_name/root/etc/
+	cp /etc/defaultdomain /zones/$zone_name/root/etc/
 	echo -e "	/etc/defaultrouter"
-	cp /etc/defaultrouter /data/$zone_name/root/etc/
+	cp /etc/defaultrouter /zones/$zone_name/root/etc/
 	echo -e "	/etc/default/init"
-	cp /etc/default/init /data/$zone_name/root/etc/
+	cp /etc/default/init /zones/$zone_name/root/etc/
 	echo -e "	/etc/nsswitch.conf"
-	cp /etc/nsswitch.conf /data/$zone_name/root/etc/
+	cp /etc/nsswitch.conf /zones/$zone_name/root/etc/
 	echo -e "Setting root password"
-	cp /etc/passwd /data/$zone_name/root/etc/passwd
-	cp /etc/shadow /data/$zone_name/root/etc/shadow
-  chmod 400 /data/$zone_name/root/etc/shadow
-	touch /data/$zone_name/root/etc/.NFS4inst_state.domain
-	rm /data/$zone_name/root/etc/.UNCONFIGURED
+	cp /etc/passwd /zones/$zone_name/root/etc/passwd
+	cp /etc/shadow /zones/$zone_name/root/etc/shadow
+  chmod 400 /zones/$zone_name/root/etc/shadow
+	touch /zones/$zone_name/root/etc/.NFS4inst_state.domain
+	rm /zones/$zone_name/root/etc/.UNCONFIGURED
 	echo -e "Done."
 	
 	echo -e "Booting zone $zone_name..."

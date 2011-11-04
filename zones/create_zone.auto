@@ -42,12 +42,12 @@ echo -e "Creating zone..."
 zonecfg -z $zone_name -f $zone_config_file
 echo -e "Done"
 
-echo -e "Creating /data/$zone_name... \c"
-mkdir -p /data/$zone_name
+echo -e "Creating /zones/$zone_name... \c"
+mkdir -p /zones/$zone_name
 echo -e "Done."
 
-echo -e "Setting permissions to 700 for /data/$zone_name... "
-chmod 700 /data/$zone_name
+echo -e "Setting permissions to 700 for /zones/$zone_name... "
+chmod 700 /zones/$zone_name
 echo -e "Done."
 
 echo -e "Installing Zone..."
@@ -55,33 +55,33 @@ zoneadm -z $zone_name install
 echo -e "Done installing zone $zone_name."
 
 echo -e "Modifying files for automated booting of $zone_name..."
-echo "$zone_name" > /data/$zone_name/root/etc/nodename
+echo "$zone_name" > /zones/$zone_name/root/etc/nodename
 echo -e "	/etc/defaultdomain"
-cp /etc/defaultdomain /data/$zone_name/root/etc/
+cp /etc/defaultdomain /zones/$zone_name/root/etc/
 echo -e "	/etc/defaultrouter"
-cp /etc/defaultrouter /data/$zone_name/root/etc/
+cp /etc/defaultrouter /zones/$zone_name/root/etc/
 echo -e "	/etc/default/init"
-cp /etc/default/init /data/$zone_name/root/etc/
+cp /etc/default/init /zones/$zone_name/root/etc/
 echo -e "	/etc/nsswitch.conf"
-cp /etc/nsswitch.conf /data/$zone_name/root/etc/
+cp /etc/nsswitch.conf /zones/$zone_name/root/etc/
 echo -e "Setting root password"
-cp /etc/passwd /data/$zone_name/root/etc/passwd
-cp /etc/shadow /data/$zone_name/root/etc/shadow
-touch /data/$zone_name/root/etc/.NFS4inst_state.domain
-rm /data/$zone_name/root/etc/.UNCONFIGURED
+cp /etc/passwd /zones/$zone_name/root/etc/passwd
+cp /etc/shadow /zones/$zone_name/root/etc/shadow
+touch /zones/$zone_name/root/etc/.NFS4inst_state.domain
+rm /zones/$zone_name/root/etc/.UNCONFIGURED
 echo -e "Done."
 #-- Sendmail is a bit funny regarding the hostname if it isn't a FQDN one.
 echo "Setting up sendmail.cf... \c"
-mv /data/$zone_name/root/etc/mail/sendmail.cf /data/$zone_name/root/etc/mail/sendmail.cf.orig
-sed -e "s/^DS.*$/DS$MAIL_RELAY/g; s/^#Dj.*/Dj$fqdn/" /data/$zone_name/root/etc/mail/sendmail.cf.orig > /data/$zone_name/root/etc/mail/sendmail.cf echo "Done." if [ -n "$MAIL_ADDR"  ]
+mv /zones/$zone_name/root/etc/mail/sendmail.cf /zones/$zone_name/root/etc/mail/sendmail.cf.orig
+sed -e "s/^DS.*$/DS$MAIL_RELAY/g; s/^#Dj.*/Dj$fqdn/" /zones/$zone_name/root/etc/mail/sendmail.cf.orig > /zones/$zone_name/root/etc/mail/sendmail.cf echo "Done." if [ -n "$MAIL_ADDR"  ]
 echo 'Configuring "built" email notification... \c'
 echo "#!/sbin/sh
 cp /etc/aliases /tmp/aliases
 echo 'root: root@devtest.bigpond.com' >> /etc/aliases   /usr/sbin/newaliases
 /etc/init.d/sendmail stop
 /etc/init.d/sendmail start
-echo \"$hostname has been built!\" | /usr/bin/mailx -s \"$hostname has been built!\" $MAIL_ADDR   rm \$0" > /data/$zone_name/root/etc/rc2.d/S999mail_notify.reboot
-chmod 755 /data/$zone_name/root/etc/rc2.d/S999mail_notify.reboot
+echo \"$hostname has been built!\" | /usr/bin/mailx -s \"$hostname has been built!\" $MAIL_ADDR   rm \$0" > /zones/$zone_name/root/etc/rc2.d/S999mail_notify.reboot
+chmod 755 /zones/$zone_name/root/etc/rc2.d/S999mail_notify.reboot
 echo "Done."
 
 	
