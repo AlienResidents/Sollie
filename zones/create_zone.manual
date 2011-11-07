@@ -12,98 +12,105 @@ then
 	echo -e "$USAGE"
 	exit 69
 fi
-zone_name="$1"
-zone_config_file="$zone_name"
+zoneName="$1"
+zonesDir="/zones"
+zonesConfigDir="$zonesDir/config"
+zoneTemplate="$zonesConfigDir/zone_template"
+zoneConfigFile="$zonesConfigDir/$zoneName"
 
-if [[ -s "$zone_config_file" ]]
+if [[ ! -d $zonesConfigDir ]]
 then
-	echo -e "Creating zone '$zone_name'... \c"
-	zonecfg -z $zone_name -f $zone_config_file
+  output=$(mkdir -p $zonesConfigDir 2>&1)
+fi
+
+if [[ -s "$zoneConfigFile" ]]
+then
+	echo -e "Creating zone '$zoneName'... \c"
+	output=$(zonecfg -z $zoneName -f $zoneConfigFile 2>&1)
 	echo -e "Done."
-	echo -e "Installing zone '$zone_name'..."
-	zoneadm -z $zone_name install
+	echo -e "Installing zone '$zoneName'..."
+	output=$(zoneadm -z $zoneName install 2>&1)
 	echo -e "Done."
 else
-	echo -e "The zone configuration file '$zone_config_file' does not exist."
+	echo -e "The zone configuration file '$zoneConfigFile' does not exist."
 	echo -e "Should I create this file now? ( y | n )  [y]: \c"
-	read create_now
-	create_now=$(echo $create_now | tr [:upper:] [:lower:])
-	if [[ "$create_now" = "y" || "$create_now" = "" ]]
+	read createNow
+	createNow=$(echo $createNow | tr [:upper:] [:lower:] 2>&1)
+	if [[ "$createNow" = "y" || "$createNow" = "" ]]
 	then
-		if [[ -s "zone_template" ]]
+		if [[ -s "$zoneTemplate" ]]
 		then
 			echo -e "There is a existing zone template file.  Do you want to use this template file? ( y | n ) [y]: \c"
-			read use_template
+			read useTemplate
 		fi
-		use_template=$(echo $use_template | tr [:upper:] [:lower:])
-		if [[ "$use_template" = "y" || "$use_template" = "" ]]
+		useTemplate=$(echo $useTemplate | tr [:upper:] [:lower:] 2>&1)
+		if [[ "$useTemplate" = "y" || "$useTemplate" = "" ]]
 		then
 			# NET_DEVICE
-			while [[ -z $net_device ]]
+			while [[ -z $netDevice ]]
 			do
-				interfaces=$(netstat -ni|grep [0-9]|egrep -v ^lo|awk '{print $1}')
-				num_interfaces=$(echo $interfaces | wc -w)
-				if [[ $num_interfaces -eq 1 ]]
+				interfaces=$(netstat -ni|grep [0-9]|egrep -v ^lo|awk '{print $1}' 2>&1)
+				numInterfaces=$(echo $interfaces | wc -w 2>&1)
+				if [[ $numInterfaces -eq 1 ]]
 				then
-					net_device=$interfaces
+					netDevice=$interfaces
 				else
-					echo -e "What network device do you want to use for $zone_name"
+					echo -e "What network device do you want to use for $zoneName"
 					echo -e "$interfaces"
 					echo -e "Choose: \c"
-					read net_device
+					read netDevice
 				fi
-				if [[ -z $net_device ]]
+				if [[ -z $netDevice ]]
 				then
 					echo -e "You must choose a valid network device."
-					unset net_device
-				elif [[ ! $(echo -e $interfaces | grep $net_device) ]]
+					unset netDevice
+				elif [[ ! $(echo -e $interfaces | grep $netDevice 2>&1) ]]
 				then
-					echo -e "$net_device is not a valid network device."
+					echo -e "$netDevice is not a valid network device."
 					echo -e "You must choose a valid network device."
-					unset net_device
+					unset netDevice
 				fi
 			done
-			echo -e "Selected $net_device for $zone_name's physical interface."
+			echo -e "Selected $netDevice for $zoneName's physical interface."
 
 			# IP_ADDRESS
-			in_dns=$(dig $zone_name.$domainname|egrep ^$zone_name | awk '{print $5}')
-			# dig $zone_name.$domainname|egrep ^$zone_name
-			if [[ -n "$in_dns" ]]
+			inDns=$(dig $zoneName.$domainname|egrep ^$zoneName | awk '{print $5}' 2>&1)
+			if [[ -n "$inDns" ]]
 			then
-				ip_address=$in_dns
+				ipAddress=$inDns
 			else
-				echo -e "What is the IP address that will be assigned to the $net_device in the $zone_name zone? : \c"
-				read ip_address
+				echo -e "What is the IP address that will be assigned to the $netDevice in the $zoneName zone? : \c"
+				read ipAddress
 			fi
-			echo -e "Selecting $ip_address for the IP address assigned to $net_device in the $zone_name zone."
+			echo -e "Selecting $ipAddress for the IP address assigned to $netDevice in the $zoneName zone."
 
 			# Creating ZONE_NAME zonecfg file
-			echo -e "Creating $zone_config_file based upon the zone_template."
-			sed "s/ZONE_NAME/$zone_name/g; s/NET_DEVICE/$net_device/g; s/IP_ADDRESS/$ip_address/g; s%RAW_DATA_DEVICE%$raw_data_device%g; s%DATA_DEVICE%$data_device%g;" zone_template > $zone_config_file.temp
+			echo -e "Creating $zoneConfigFile based upon the $zoneTemplate."
+			sed "s/ZONE_NAME/$zoneName/g; s/NET_DEVICE/$netDevice/g; s/IP_ADDRESS/$ipAddress/g; s%RAW_DATA_DEVICE%$raw_data_device%g; s%DATA_DEVICE%$data_device%g;" $zoneTemplate > $zoneConfigFile.temp
 
 			# DATA_DEVICE
-			use_lvm=$(df -h | egrep -e '\/dev\/md') || use_lvm="no"
-			if [[ "$use_lvm" = "no" ]]
+			useLvm=$(df -h | egrep -e '\/dev\/md' 2>&1) || useLvm="no"
+			if [[ "$useLvm" = "no" ]]
 			then
-				sed 's/#Nset /set /g' $zone_config_file.temp > $zone_config_file
-				rm $zone_config_file.temp
+				sed 's/#Nset /set /g' $zoneConfigFile.temp > $zoneConfigFile
+				rm $zoneConfigFile.temp
 			else
-				sed 's/#Mset /set /g' $zone_config_file.temp > $zone_config_file
-				rm $zone_config_file.temp
+				sed 's/#Mset /set /g' $zoneConfigFile.temp > $zoneConfigFile
+				rm $zoneConfigFile.temp
 			fi
 		else
-			vi $zone_config_file
+			vi $zoneConfigFile
 		fi
-		if [[ -s $zone_config_file ]]
+		if [[ -s $zoneConfigFile ]]
 		then
 			echo -e "Creating zone..."
-		  zonecfg -z $zone_name -f $zone_config_file
+		  output=$(zonecfg -z $zoneName -f $zoneConfigFile 2>&1)
 			echo -e "Done"
 		else
 			echo -e "The zone configuration file is empty, so I'm quitting, and getting rid of the empty file... \c"
-			if [[ -f "$zone_config_file" ]]
+			if [[ -f "$zoneConfigFile" ]]
 			then
-				rm $zone_config_file
+				rm $zoneConfigFile
 			fi
 			echo -e "Done."
 		fi
@@ -113,44 +120,58 @@ else
 	fi
 fi
 
-echo -e "Create $zone_name now? ( y | n ) [y] : \c"
-read build_now
-build_now=$(echo $build_now | tr [:upper:] [:lower:])
-if [[ -z "$build_now" || "$build_now" = "y" ]]
+echo -e "Create $zoneName now? ( y | n ) [y] : \c"
+read buildNow
+buildNow=$(echo $buildNow | tr [:upper:] [:lower:] 2>&1)
+if [[ -z "$buildNow" || "$buildNow" = "y" ]]
 then
-	echo -e "Creating /zones/$zone_name... \c"
-	mkdir -p /zones/$zone_name
+	echo -e "Creating /zones/$zoneName... \c"
+	output=$(mkdir -p /zones/$zoneName 2>&1)
 	echo -e "Done."
 
-	echo -e "Setting permissions to 700 for /zones/$zone_name... "
-	chmod 700 /zones/$zone_name
+	echo -e "Setting permissions to 700 for /zones/$zoneName... "
+	output=$(chmod 700 /zones/$zoneName 2>&1)
 	echo -e "Done."
 
 	echo -e "Installing Zone..."
-	zoneadm -z $zone_name install
-	echo -e "Done installing zone $zone_name."
+	output=$(zoneadm -z $zoneName install 2>&1)
+	echo -e "Done installing zone $zoneName."
 
-	echo -e "Modifying files for automated booting of $zone_name..."
-	echo "$zone_name" > /zones/$zone_name/root/etc/nodename
+	echo -e "Modifying files for automated booting of $zoneName..."
+	echo "$zoneName" > /zones/$zoneName/root/etc/nodename
+  echo -e " /root"
+	output=$(mkdir -p /zones/$zoneName/root/root 2>&1)
+
 	echo -e "	/etc/defaultdomain"
-	cp /etc/defaultdomain /zones/$zone_name/root/etc/
+	output=$(cp /etc/defaultdomain /zones/$zoneName/root/etc/ 2>&1)
+
 	echo -e "	/etc/defaultrouter"
-	cp /etc/defaultrouter /zones/$zone_name/root/etc/
+	output=$(cp /etc/defaultrouter /zones/$zoneName/root/etc/ 2>&1)
+
 	echo -e "	/etc/default/init"
-	cp /etc/default/init /zones/$zone_name/root/etc/
+	output=$(cp /etc/default/init /zones/$zoneName/root/etc/ 2>&1)
+
 	echo -e "	/etc/nsswitch.conf"
-	cp /etc/nsswitch.conf /zones/$zone_name/root/etc/
+	output=$(cp /etc/nsswitch.conf /zones/$zoneName/root/etc/ 2>&1)
+
+	echo -e " /etc/resolv.conf"
+	output=$(cp /etc/resolv.conf /zones/$zoneName/root/etc/ 2>&1)
+
 	echo -e "Setting root password"
-	cp /etc/passwd /zones/$zone_name/root/etc/passwd
-	cp /etc/shadow /zones/$zone_name/root/etc/shadow
-  chmod 400 /zones/$zone_name/root/etc/shadow
-	touch /zones/$zone_name/root/etc/.NFS4inst_state.domain
-	rm /zones/$zone_name/root/etc/.UNCONFIGURED
+	output=$(cp /etc/passwd /zones/$zoneName/root/etc/passwd 2>&1)
+	output=$(cp /etc/shadow /zones/$zoneName/root/etc/shadow 2>&1)
+  output=$(chmod 400 /zones/$zoneName/root/etc/shadow 2>&1)
+	output=$(touch /zones/$zoneName/root/etc/.NFS4inst_state.domain 2>&1)
+	output=$(rm /zones/$zoneName/root/etc/.UNCONFIGURED 2>&1)
 	echo -e "Done."
-	
-	echo -e "Booting zone $zone_name..."
-	zoneadm -z $zone_name boot
-	echo -e "Done booting $zone_name."
+
+	echo -e "Booting zone $zoneName..."
+	output=$(zoneadm -z $zoneName boot 2>&1)
+
+	echo -e "Done booting $zoneName."
+  echo -e "Setting up the ssh keys... \c"
+  output=$(zlogin $zoneName "/lib/svc/method/sshd -c")
+  output=$(zlogin $zoneName "svcadm restart ssh")
 fi
 
 
