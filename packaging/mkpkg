@@ -193,7 +193,7 @@ print "* Extraction complete.\n\n";
 #CLASSES = "none"
 
 $pkg{description} = getInfo('description', 's');
-$pkg{version} = getInfo('version', 'i');
+$pkg{version} = getInfo('version', 's');
 $pkg{maintainer} = getInfo('maintainer', 's');
 $pkg{email} = getInfo('contact email', 'e');
 $pkg{vendor} = getInfo('vendor', 's');
