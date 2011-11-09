@@ -157,6 +157,9 @@ then
 	echo -e " /etc/resolv.conf"
 	output=$(cp /etc/resolv.conf /zones/$zoneName/root/etc/ 2>&1)
 
+	echo -e " /etc/TIMEZONE"
+	output=$(cp /etc/TIMEZONE /zones/$zoneName/root/etc/ 2>&1)
+
 	echo -e "Setting root password"
 	output=$(cp /etc/passwd /zones/$zoneName/root/etc/passwd 2>&1)
 	output=$(cp /etc/shadow /zones/$zoneName/root/etc/shadow 2>&1)
