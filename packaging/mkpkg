@@ -18,11 +18,11 @@ use Data::Dumper;
 $|=1;
 
 # These are all global values
-use vars qw(%request %preInstall %postInstall %pkg %tar %rm @bits $USAGE
-  $baseDir $baseBuildDir $untarStatus $temp $badPerms $group $status $request
-  $requestLocation $tar $preinstall $postinstall $name $package $cwd $rmBuildDir
-  $user $count $requestName $arg $size $timestamp $tstamp $homeDir $siUnits
-  $startDir
+use vars qw(%request %preInstall %postInstall %preRemove %postRemove %pkg %tar
+  %rm @bits $USAGE $baseDir $baseBuildDir $untarStatus $temp $badPerms $group
+  $status $request $requestLocation $tar $preinstall $postinstall $name
+  $package $cwd $rmBuildDir $user $count $requestName $arg $size $timestamp
+  $tstamp $homeDir $siUnits $startDir
 );
 
 $USAGE = "
@@ -169,6 +169,8 @@ if ($tar{method} eq 'tardir') {
 %request = getScript('request');
 %preInstall = getScript('preinstall');
 %postInstall = getScript('postinstall');
+%preRemove = getScript('preremove');
+%postRemove = getScript('postremove');
 
 print "Using $pkg{name} for this package.\n";
 
