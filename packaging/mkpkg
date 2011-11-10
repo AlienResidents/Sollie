@@ -237,6 +237,14 @@ if ($postInstall{name}) {
   system("cp $postInstall{location} $baseBuildDir");
   print PROTOTYPE "i postinstall=$postInstall{location}\n";
 }
+if ($preRemove{name}) {
+  system("cp $preRemove{location} $baseBuildDir");
+  print PROTOTYPE "i preremove=$preRemove{location}\n";
+}
+if ($postRemove{name}) {
+  system("cp $postRemove{location} $baseBuildDir");
+  print PROTOTYPE "i postremove=$postRemove{location}\n";
+}
 while (<TMP>) {
   if ($_ !~ /^s|^l/) {
     if ($_ !~ "/^.*prototype.*$/" || $_ !~ "/^.*pkginfo.*$/") {
