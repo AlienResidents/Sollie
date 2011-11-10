@@ -22,7 +22,7 @@ use vars qw(%request %preInstall %postInstall %preRemove %postRemove %pkg %tar
   %rm @bits $USAGE $baseDir $baseBuildDir $untarStatus $temp $badPerms $group
   $status $request $requestLocation $tar $preinstall $postinstall $name
   $package $cwd $rmBuildDir $user $count $requestName $arg $size $timestamp
-  $tstamp $homeDir $siUnits $startDir
+  $tstamp $homeDir $siUnits $startDir $pkgsDir
 );
 
 $USAGE = "
@@ -128,6 +128,10 @@ if ($rm{basedir} == 1 && -d $baseDir) {
   print "* Removing an existing \$baseDir: $baseDir\n";
   rmtree($baseDir) || die "Can't remove $baseDir\n$!\n";
 }
+$pkgsDir = "$baseDir/pkgs";
+if (!-d $pkgsDir) {
+  mkpath $pkgsDir or die "The pkgs directory \"$pkgsDir\" could not be made.\n$!\n";
+}
 
 $arg = $ARGV[0];
 $arg =~ s/\/$//;
@@ -137,20 +141,30 @@ if (-f $arg) {
   $tar{method} = "tarball";
   $pkg{name} = basename($tar{file});
   if (compare($tar{file}, "$baseDir/" . basename($tar{file})) != 0) {
-    mkpath $baseDir or die "The base directory \"$baseDir\" could not be made.\n$!\n";
+    if (!-d $baseDir) {
+      mkpath $baseDir or die "The base directory \"$baseDir\" could not be made.\n$!\n";
+    }
     copy($tar{file}, "$baseDir/",) or die "1: Copy failed:\n$!\n";
   }
   $tar{file} = "$baseDir/" . basename($tar{file});
 } elsif (-d $arg) {
   $tar{method} = "tardir";
   $tar{dir} = $arg;
-  $tar{file} = "$baseDir/" . basename($tar{dir}) . ".tar.gz";
   $pkg{name} = basename($tar{dir});
+  #$tar{file} = "$baseDir/" . basename($tar{dir}) . ".tar.gz";
 } elsif (!-f $arg && !-d $arg) {
   die "$arg doesn't exist.\n";
 }
 $pkg{name} =~ s/-.*$//g;
-$baseBuildDir = "$baseDir/$pkg{name}";
+
+$pkg{description} = getInfo('description', 's');
+$pkg{version} = getInfo('version', 's');
+$pkg{maintainer} = getInfo('maintainer', 's');
+$pkg{email} = getInfo('contact email', 'e');
+$pkg{vendor} = getInfo('vendor', 's');
+$pkg{basedir} = getInfo('base directory', 's');
+
+$baseBuildDir = "$baseDir/$pkg{name}.src";
 if (-d $baseBuildDir && $rm{basebuilddir} == 1) {
   print "* Removing an existing (old) \$baseBuildDir: $baseBuildDir\n";
   rmtree($baseBuildDir) || die "Can't remove $baseBuildDir\n$!\n";
@@ -161,6 +175,7 @@ if ($tar{method} eq 'tardir') {
   chdir $tar{dir} || die "Can't change to $tar{dir}.\n$!\n";;
   chdir "../" || die "Can't change to '../'.\n$!\n";;
   my @files = dirwalk(basename($tar{dir}));
+  $tar{file} = "$baseDir/$pkg{name}-$pkg{arch}-sol$pkg{osver}-v$pkg{version}.tar.gz";
   system("tar -czf $tar{file} @files");
 } elsif ($tar{method} eq 'tarfile') {
   chdir dirname($tar{file});
@@ -188,18 +203,11 @@ print "* Extraction complete.\n\n";
 #ARCH = "sparc"
 #VERSION = "1.2.3-4"
 #CATEGORY = "application"
-#VENDOR = "The Packaging Plan"
+#VENDOR = "The Packaging Plant"
 #EMAIL = "Packager@packaging.plant.com"
 #PSTAMP = "Henry Rollins"
 #BASEDIR = "/"
 #CLASSES = "none"
-
-$pkg{description} = getInfo('description', 's');
-$pkg{version} = getInfo('version', 's');
-$pkg{maintainer} = getInfo('maintainer', 's');
-$pkg{email} = getInfo('contact email', 'e');
-$pkg{vendor} = getInfo('vendor', 's');
-$pkg{basedir} = getInfo('base directory', 's');
 
 $badPerms = system("find $baseBuildDir -type f -perm -2 > $homeDir/$pkg{name}.badPerms");
 $badPerms .= system("find $baseBuildDir -type d -perm -2 > $homeDir/$pkg{name}.badPerms");
@@ -263,7 +271,6 @@ if (-d "$homeDir/tmp") {
 }
 close PROTOTYPE;
 
-#ARCH='$pkg{arch}'
 open(my $PKGINFO, ">$baseBuildDir/$pkg{info}");
 print $PKGINFO "PKG='$pkg{name}'
 NAME='$pkg{description}'
@@ -274,11 +281,15 @@ EMAIL='$pkg{email}'
 PSTAMP='$pkg{maintainer}'
 BASEDIR='$pkg{basedir}'
 CLASSES='none'
+ARCH='$pkg{arch}'
 ";
 close $PKGINFO;
 
 print "Making $pkg{name} now...\n";
-$status = system("pkgmk -d $baseBuildDir -r $baseBuildDir");
+if (-d "$pkgsDir/$pkg{name}") {
+  rmtree("$pkgsDir/$pkg{name}") || die "Can't remove $pkgsDir/$pkg{name}\n$!\n";
+}
+$status = system("pkgmk -d $pkgsDir -r $baseBuildDir");
 if ($status != "0") {
   print "The creation of $pkg{name} failed.\n";
   exit;
@@ -301,8 +312,8 @@ if ($tstamp ne "") {
   $timestamp = $tstamp;
 }
 $package = "$baseDir/$pkg{name}-$pkg{arch}-sol$pkg{osver}-v$pkg{version}-$timestamp.pkg";
-system("pkgtrans -s $baseBuildDir $package $pkg{name}");
-$size = (lstat($package))[7];
+system("pkgtrans -s $pkgsDir $package $pkg{name}");
+$size = (lstat($package))[7] or die "Couldn't get size information for $package\n";
 $count = 0;
 while ($size >= $siUnits) {
   $count++;
