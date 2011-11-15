@@ -6,14 +6,14 @@ I'll be fixing it up, but feel free to point out the shit bits before I get to
 them.
 
 
-packaging:
- This is where I keep my solaris package creation tool(s).
+= packaging =
+This is where I keep my solaris package creation tool(s).
 
-jumpstart:
- This be where I keep me goodies for jumpin solaris boxes, yar!!
+= jumpstart =
+This be where I keep me goodies for jumpin solaris boxes, yar!!
 
-zones:
- Scripts for Solaris 10 zones.
+= zones =
+Scripts for Solaris 10 zones.
 
-ldom:
- Scripts for various functions with LDOMs (Logical DOMains) / OVMs (Oracle Virtual Machines).
+= ldom =
+Scripts for various functions with LDOMs (Logical DOMains) / OVMs (Oracle Virtual Machines).
