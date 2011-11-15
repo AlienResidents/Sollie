@@ -17,6 +17,12 @@ zonesDir="/zones"
 zonesConfigDir="$zonesDir/config"
 zoneTemplate="$zonesConfigDir/zone_template"
 zoneConfigFile="$zonesConfigDir/$zoneName"
+createType="create"
+hasVim=$(which vim 2>&1)
+if [[ -n $hasVim ]]
+then
+  alias vi=vim
+fi
 
 if [[ ! -d $zonesConfigDir ]]
 then
@@ -25,6 +31,11 @@ fi
 
 if [[ -s "$zoneConfigFile" ]]
 then
+  echo -e "A configuration file for $zoneName already exists."
+  echo -e "Press enter to continue building $zoneName."
+  echo -e "Press ctrl-c to escape from building $zoneName."
+  echo -e "After pressing ctrl-c, mv/rm $zoneConfigFile."
+  read illiteracyRate
   echo -e "Creating zone '$zoneName'... \c"
   output=$(zonecfg -z $zoneName -f $zoneConfigFile 2>&1) || echo -e "$output"
   echo -e "Done."
@@ -73,6 +84,19 @@ else
       done
       echo -e "Selected $netDevice for $zoneName's physical interface."
 
+      # What type of zone are we making? Full or sparse?
+      while [[ $type != "full" && $type != "sparse" ]]
+      do
+        echo -e "What type of zone do you want to create?"
+        echo -e "Full\nSparse\n"
+        read type
+        type=$(echo $type | tr [:upper:] [:lower:] 2>&1)
+      done
+      # There is a default type of sparse
+      if [[ $type = "full" ]]
+      then
+        createType="create -F -b"
+      fi
       # IP_ADDRESS
       inDns=$(dig $zoneName.$domainname|egrep ^$zoneName | awk '{print $5}' 2>&1) || echo -e "$output"
       if [[ -n "$inDns" ]]
@@ -86,17 +110,26 @@ else
 
       # Creating ZONE_NAME zonecfg file
       echo -e "Creating $zoneConfigFile based upon the $zoneTemplate."
-      sed "s/ZONE_NAME/$zoneName/g; s/NET_DEVICE/$netDevice/g; s/IP_ADDRESS/$ipAddress/g; s%RAW_DATA_DEVICE%$raw_data_device%g; s%DATA_DEVICE%$data_device%g;" $zoneTemplate > $zoneConfigFile.temp
+      cp $zoneTemplate $zoneConfigFile
+      #sed "s/ZONE_NAME/$zoneName/g; s/NET_DEVICE/$netDevice/g; s/IP_ADDRESS/$ipAddress/g; s%RAW_DATA_DEVICE%$raw_data_device%g; s%DATA_DEVICE%$data_device%g;" $zoneTemplate > $zoneConfigFile.temp
+      perl -p -i -e "s/CREATE_TYPE/$createType/g" $zoneConfigFile
+      perl -p -i -e "s/ZONE_NAME/$zoneName/g" $zoneConfigFile
+      perl -p -i -e "s/NET_DEVICE/$netDevice/g" $zoneConfigFile
+      perl -p -i -e "s/IP_ADDRESS/$ipAddress/g" $zoneConfigFile
+      perl -p -i -e "s%RAW_DATA_DEVICE%$raw_data_device%g" $zoneConfigFile
+      perl -p -i -e "s%DATA_DEVICE%$data_device%g" $zoneConfigFile
 
       # DATA_DEVICE
       useLvm=$(df -l | egrep -e '\/dev\/md' 2>&1) || useLvm="no"
       if [[ "$useLvm" = "no" ]]
       then
-        sed 's/#Nset /set /g' $zoneConfigFile.temp > $zoneConfigFile
-        rm $zoneConfigFile.temp
+        #sed 's/#Nset /set /g' $zoneConfigFile.temp > $zoneConfigFile
+        perl -p -i -e 's/#Nset /set /g' $zoneConfigFile
+        #rm $zoneConfigFile.temp
       else
-        sed 's/#Mset /set /g' $zoneConfigFile.temp > $zoneConfigFile
-        rm $zoneConfigFile.temp
+        #sed 's/#Mset /set /g' $zoneConfigFile.temp > $zoneConfigFile
+        perl -p -i -e 's/#Mset /set /g' $zoneConfigFile
+        #rm $zoneConfigFile.temp
       fi
     else
       vi $zoneConfigFile
@@ -164,7 +197,13 @@ then
   output=$(cp /etc/TIMEZONE /zones/$zoneName/root/etc/ 2>&1) || echo -e "$output"
 
   echo -e "  Setting up the /home directories"
-  output=$(for i in `grep home /zones/$zoneName/root/etc/passwd | awk -F: '{print $1"."$4}'`; do user=$(echo $i | sed 's/\..*$//g'); grp=$(echo $i | sed 's/^[a-z]*\.\([0-9]*\)$/\1/g'); mkdir -p /zones/$zoneName/root/home/$user; chown $user:$grp /zones/$zoneName/root/home/$user; done)
+  output=$(for i in `grep home /zones/$zoneName/root/etc/passwd | awk -F: '{print $1"."$4}'`
+           do
+             user=$(echo $i | sed 's/\..*$//g')
+             grp=$(echo $i | sed 's/^[a-z]*\.\([0-9]*\)$/\1/g')
+             mkdir -p /zones/$zoneName/root/home/$user
+             chown $user:$grp /zones/$zoneName/root/home/$user
+           done)
 
   echo -e "Setting root password"
   output=$(cp /etc/passwd /zones/$zoneName/root/etc/passwd 2>&1) || echo -e "$output"

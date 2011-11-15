@@ -1,4 +1,4 @@
-create
+CREATE_TYPE
 	set zonepath=/zones/ZONE_NAME
 	set autoboot=false
 	add net
