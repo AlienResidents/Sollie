@@ -1,13 +1,13 @@
 create_zone.manual:
- This is used from a global zone to create a minimal zone manually by answering
- questions.  This script will have the name changed at some point in the future
- as I am in the process of merging the auto and manual scripts.
+This is used from a global zone to create a minimal zone manually by answering
+questions.  This script will have the name changed at some point in the future
+as I am in the process of merging the auto and manual scripts.
 
 create_zone.auto:
- This '''was''' used for creating zones automatically, but I'm getting rid of
- this script eventually as it serves no efficient purpose.
+This '''was''' used for creating zones automatically, but I'm getting rid of
+this script eventually as it serves no efficient purpose.
 
 zone_template:
- This is the template currently used by both the auto and manual scripts.
- This will be going away at some point in the future as I'll derive all needed
- configuration details from the zone create script itself.
+This is the template currently used by both the auto and manual scripts.
+This will be going away at some point in the future as I'll derive all needed
+configuration details from the zone create script itself.
