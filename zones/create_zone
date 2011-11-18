@@ -1,0 +1,206 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use vars qw($zoneCfg $zoneAdm $domainName $usage $zoneName $zonesDir $zonesConfigDir
+$zoneTemplate $useTemplate $zoneConfigFile $createType $output);
+
+$usage = "
+$0 <ZONE NAME>
+";
+($ARGV[0]) or die "$usage\n";
+
+
+$zoneCfg = "/usr/sbin/zonecfg";
+(-x $zoneCfg) or die "You may need to install some zone packages, $zoneCfg is not available.\n";
+
+$zoneAdm = "/usr/sbin/zoneAdm";
+(-x $zoneAdm) or die "You may need to install some zone packages, $zoneAdm is not available.\n";
+
+$domainName = qx%domainname% or $domainName = qx%cat /etc/defaultdomain%;
+
+$zoneName = "$ARGV[0]";
+$zonesDir = "/zones";
+$zonesConfigDir = "$zonesDir/config";
+$zoneTemplate = "$zonesConfigDir/zone_template";
+$zoneConfigFile = "$zonesConfigDir/$zoneName";
+$createType = "create";
+
+if (!-d $zonesConfigDir) {
+  $output = qx%mkdir -p $zonesConfigDir% or print "$output\n";
+}
+
+#if (-s "$zoneConfigFile") {;
+#  print "A configuration file for $zoneName already exists.\n";
+#  print "Press enter to continue building $zoneName.\n";
+#  print "Press ctrl-c to escape from building $zoneName.\n";
+#  print "After pressing ctrl-c, mv/rm $zoneConfigFile.\n";
+#  my $illiteracyRate = <STDIN>;
+#  print "Creating zone '$zoneName'...\n";
+#  $output = qx%$zoneCfg -z $zoneName -f $zoneConfigFile% or print "$output\n";
+#  print "Done.\n";
+#  print "Installing zone '$zoneName'...\n";
+#  $output = qx%$zoneAdm -z $zoneName install% or print "$output\n";
+#  print "Done.\n";
+#} else {;
+#  print "The zone configuration file '$zoneConfigFile' does not exist.\n";
+#  print "Should I create this file now? ( y | n )  [y]: \n";
+#  my $createNow = <STDIN>;
+#  $createNow =~ qx%echo $createNow | tr [:upper:] [:lower:]% or print "$output\n";
+#  if ("$createNow" eq "y" or "$createNow" eq "") {;
+#    if (-s "$zoneTemplate") {;
+#      print "There is a existing zone template file.  Do you want to use this template file? ( y | n ) [y]: \n";
+#      $useTemplate = <STDIN>;
+#    };
+#    $useTemplate = qx%echo $useTemplate | tr [:upper:] [:lower:]%;
+#    if ("$useTemplate" eq "y" or "$useTemplate" eq "") {;
+#      # NET_DEVICE;
+#      while (-z $netDevice) {
+#        $interfaces = qx%netstat -ni|grep [0-9]|egrep -v ^lo|awk '{print $1}'%;
+#        $numInterfaces = qx%echo $interfaces | wc -w%;
+#        if ($numInterfaces -eq 1) {;
+#          $netDevice = $interfaces;
+#        } else {;
+#          print "What network device do you want to use for $zoneName\n";
+#          print "$interfaces\n";
+#          print "Choose: \n";
+#          $netDevice = <STDIN>;
+#        };
+#        if (-z $netDevice) {;
+#          print "You must choose a valid network device.\n";
+#          undef netDevice;
+#        } elsif (! qx%print $interfaces | grep $netDevice%) {;
+#          print "$netDevice is not a valid network device.\n";
+#          print "You must choose a valid network device.\n";
+#          undef netDevice;
+#        };
+#      }
+#      print "Selected $netDevice for $zoneName's physical interface.\n";
+#
+#      # What type of zone are we making? Full or sparse?;
+#      while ($type != "full" && $type != "sparse") {
+#        print "What type of zone do you want to create?\n";
+#        print "Full\nSparse\n";
+#        my $type = <STDIN>;
+#        $type = qx%echo $type | tr [:upper:] [:lower:]%;
+#      }
+#      # There is a default type of sparse;
+#      if ($type = "full") {;
+#        my createType = "create -F -b";
+#      };
+#      # IP_ADDRESS;
+#      my inDns = qx%dig $zoneName.$domainName|egrep ^$zoneName | awk '{print $5}'% or print "$output\n";
+#      if (-n "$inDns") {;
+#        my ipAddress = $inDns;
+#      } else {;
+#        print "What is the IP address that will be assigned to the $netDevice in the $zoneName zone? : \n";
+#        my $ipAddress = <STDIN>;
+#      };
+#      print "Selecting $ipAddress for the IP address assigned to $netDevice in the $zoneName zone.\n";
+#
+#      # Creating ZONE_NAME zoneCfg file;
+#      print "Creating $zoneConfigFile based upon the $zoneTemplate.\n";
+#      cp $zoneTemplate $zoneConfigFile;
+#      #sed "s/ZONE_NAME/$zoneName/g; s/NET_DEVICE/$netDevice/g; s/IP_ADDRESS/$ipAddress/g; s%RAW_DATA_DEVICE%$raw_data_device%g; s%DATA_DEVICE%$data_device%g;" $zoneTemplate > $zoneConfigFile.temp;
+#      perl -p -i -e "s/CREATE_TYPE/$createType/g" $zoneConfigFile;
+#      perl -p -i -e "s/ZONE_NAME/$zoneName/g" $zoneConfigFile;
+#      perl -p -i -e "s/NET_DEVICE/$netDevice/g" $zoneConfigFile;
+#      perl -p -i -e "s/IP_ADDRESS/$ipAddress/g" $zoneConfigFile;
+#      perl -p -i -e "s%RAW_DATA_DEVICE%$raw_data_device%g" $zoneConfigFile;
+#      perl -p -i -e "s%DATA_DEVICE%$data_device%g" $zoneConfigFile;
+#
+#      # DATA_DEVICE;
+#      useLvm = qx%df -l | egrep -e '\/dev\/md'% or useLvm = "no";
+#      if ("$useLvm" = "no") {;
+#        perl -p -i -e 's/#Nset /set /g' $zoneConfigFile;
+#      } else {;
+#        perl -p -i -e 's/#Mset /set /g' $zoneConfigFile;
+#      };
+#    } else {;
+#      vi $zoneConfigFile;
+#    };
+#    if (-s $zoneConfigFile) {;
+#      print "Creating zone...\n";
+#      $output = qx%$zoneCfg -z $zoneName -f $zoneConfigFile% or print "$output\n";
+#      print "Done\n";
+#    } else {;
+#      print "The zone configuration file is empty, so I'm quitting, and getting rid of the empty file... \n";
+#      if (-f "$zoneConfigFile") {;
+#        rm $zoneConfigFile;
+#      };
+#      print "Done.\n";
+#    };
+#  } else {;
+#    print "Fine be thay way, I'm quitting now.\n";
+#    exit 1;
+#  };
+#};
+#
+#print "Create $zoneName now? ( y | n ) [y] : \n";
+#$buildNow = <STDIN>;
+#$buildNow = qx%echo $buildNow | tr [:upper:] [:lower:]%;
+#if (-z "$buildNow" or "$buildNow" = "y") {;
+#  print "Creating /zones/$zoneName... \n";
+#  $output = qx%mkdir -p /zones/$zoneName% or print "$output\n";
+#  print "Done.\n";
+#
+#  print "Setting permissions to 700 for /zones/$zoneName... \n";
+#  $output = qx%chmod 700 /zones/$zoneName% or print "$output\n";
+#  print "Done.\n";
+#
+#  print "Installing Zone...\n";
+#  $output = qx%$zoneAdm -z $zoneName install% or print "$output\n";
+#  print "Done installing zone $zoneName.\n";
+#
+#  print "Modifying files for automated booting of $zoneName...\n";
+#  print "$zoneName" > /zones/$zoneName/root/etc/nodename;
+#
+#  print " /root\n";
+#  $output = qx%mkdir -p /zones/$zoneName/root/root% or print "$output\n";
+#
+#  print "  /etc/defaultdomain";
+#  $output = qx%cp /etc/defaultdomain /zones/$zoneName/root/etc/% or print "$output\n";
+#
+#  print "  /etc/defaultrouter\n";
+#  $output = qx%cp /etc/defaultrouter /zones/$zoneName/root/etc/% or print "$output\n";
+#
+#  print "  /etc/default/init\n";
+#  $output = qx%cp /etc/default/init /zones/$zoneName/root/etc/default% or print "$output\n";
+#
+#  print "  /etc/nsswitch.conf\n";
+#  $output = qx%cp /etc/nsswitch.conf /zones/$zoneName/root/etc/% or print "$output\n";
+#
+#  print "  /etc/resolv.conf\n";
+#  $output = qx%cp /etc/resolv.conf /zones/$zoneName/root/etc/% or print "$output\n";
+#
+#  print "  /etc/ssh/sshd_config\n";
+#  $output = qx%cp /etc/ssh/sshd_config /zones/$zoneName/root/etc/ssh/% or print "$output\n";
+#
+#  print "  /etc/TIMEZONE\n";
+#  $output = qx%cp /etc/TIMEZONE /zones/$zoneName/root/etc/% or print "$output\n";
+#
+#  print "  Setting up the /home directories\n";
+#  $output = qx%for i in `grep home /zones/$zoneName/root/etc/passwd | awk -F: '{print $1"."$4}'`;
+#             user = qx%echo $i | sed 's/\..*$//g');
+#             grp = qx%echo $i | sed 's/^[a-z]*\.\([0-9]*\)$/\1/g');
+#             mkdir -p /zones/$zoneName/root/home/$user;
+#             chown $user:$grp /zones/$zoneName/root/home/$user;
+#           done);
+#
+#  print "Setting root password\n";
+#  $output = qx%cp /etc/passwd /zones/$zoneName/root/etc/passwd% or print "$output\n";
+#  $output = qx%cp /etc/shadow /zones/$zoneName/root/etc/shadow% or print "$output\n";
+#  $output = qx%chmod 400 /zones/$zoneName/root/etc/shadow% or print "$output\n";
+#  $output = qx%touch /zones/$zoneName/root/etc/.NFS4inst_state.domain% or print "$output\n";
+#  $output = qx%rm /zones/$zoneName/root/etc/.UNCONFIGURED% or print "$output\n";
+#  print "Done.\n";
+#
+#  print "Booting zone $zoneName...\n";
+#  $output = qx%$zoneAdm -z $zoneName boot% or print "$output\n";
+#
+#  print "Done booting $zoneName.\n";
+#  print "Setting up the ssh keys... \n";
+#  $output = qx%zlogin $zoneName "/lib/svc/method/sshd -c"% or print "$output\n";
+#  $output = qx%zlogin $zoneName "svcadm restart ssh"% or print "$output\n";
+#}
