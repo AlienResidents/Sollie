@@ -1,0 +1,16 @@
+= add_install_client =
+This is the modified solaris add_install_script so I can run the
+add_install_client on a linux machine.
+
+= check =
+This script is a cut down version of the solaris version that creates the
+rules.ok file based on entries on the rules file (which I don't keep for some
+reason).
+
+= rm_install_client =
+This is the modified solaris version of the script for running the
+rm_install_client on a linux machine.
+
+= setup_install_server =
+This is the modifed solaris version of the script for running the
+setup_install_server on a linux machine.
