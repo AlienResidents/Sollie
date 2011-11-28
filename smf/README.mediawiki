@@ -1,0 +1,4 @@
+= manipresto =
+manipresto is a perl script designed to help in the creation of simple
+services.  It's output is a single XML file that you can feed into the
+svccfg {validate,import,etc} functions.
