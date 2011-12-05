@@ -3,6 +3,10 @@
 # I create a MAC address using the vendor Sun Microsystems (00:14:4F)
 # then check the existing LDOMs (OVMs) for duplicate MAC addresses.
 #
+# vim:
+#     :set tabstop=2
+#     :set expandtab
+#     :set foldmethod=marker
 
 use warnings;
 use strict;
