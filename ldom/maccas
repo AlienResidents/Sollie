@@ -1,0 +1,59 @@
+#!/usr/bin/env perl
+#
+# I create a MAC address using the vendor Sun Microsystems (00:14:4F)
+# then check the existing LDOMs (OVMs) for duplicate MAC addresses.
+#
+
+use warnings;
+use strict;
+use vars qw(@macs @lines $newMac);
+my $vendorPrefix = "00:14:4f";
+
+my $usage = "
+$0
+";
+
+# {{{ makeMac
+sub makeMac {
+  my $fourth = sprintf("%02x", rand(256));
+  my $fifth = sprintf("%02x", rand(256));
+  my $sixth = sprintf("%02x", rand(256));
+  $newMac = "$vendorPrefix:$fourth:$fifth:$sixth";
+}
+# }}}
+# {{{ @servers
+my @servers = qw(root@epvsol01-ldom01
+                 root@bpvsol01-ldom01);
+# }}}
+# {{{ remoteCommand
+my $remoteCommand = "/usr/sbin/ldm ls -l -o network | grep '$vendorPrefix'";
+# }}}
+# {{{ Buiding @lines
+foreach my $server (@servers) {
+  print "Acquiring MACs from $server: ";
+  push @lines, qx/ssh $server "$remoteCommand"/;
+  print "Done.\n";
+}
+# }}}
+# {{{ Buiding @macs
+foreach my $line (@lines) {
+  chomp($line);
+  $line =~ s/^.*(00:14:4f(:[0-9|a-f]{2}){3}).*$/$1/g;
+  push @macs, $line;
+}
+# }}}
+my $duplicate = 1;
+print "Verifying MAC addresses... ";
+while ($duplicate eq 1) {
+  $duplicate = 0;
+  makeMac;
+  foreach my $mac (@macs) {
+    if ($mac eq $newMac) {
+      $duplicate = 1;
+      last;
+    }
+  }
+}
+print "Done.\n";
+print "=============================================\n";
+print "$newMac\n";
