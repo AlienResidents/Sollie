@@ -1,7 +1,8 @@
 #!/usr/bin/env perl
 #
 # I create a MAC address using the vendor Sun Microsystems (00:14:4F)
-# then check the existing LDOMs (OVMs) for duplicate MAC addresses.
+# then check the existing LDOMs (OVMs) for duplicate MAC addresses, and once
+# I have confirmed no duplicate MAC addresses, I'll return with the new MAC.
 #
 # vim:
 #     :set tabstop=2
@@ -26,8 +27,14 @@ sub makeMac {
 }
 # }}}
 # {{{ @servers
+# The @servers should be filled with the Primary LDOMs for your environments.
 my @servers = qw(root@epvsol01-ldom01
                  root@bpvsol01-ldom01);
+if (!scalar(@servers)) {
+  print "\@servers has not been populated.\n";
+  print "You should edit this script ($0), and set those values.\n";
+  exit 1;
+}
 # }}}
 # {{{ remoteCommand
 my $remoteCommand = "/usr/sbin/ldm ls -l -o network | grep '$vendorPrefix'";
