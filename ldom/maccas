@@ -19,6 +19,10 @@ $0
 ";
 
 # {{{ makeMac
+# Making the last three octets
+# I would put a single sprintf line, but I noticed that there was a close
+# relation to the numbers being created, so I separated them out so it looks
+# more random (no idea if it really if it is more random or not).
 sub makeMac {
   my $fourth = sprintf("%02x", rand(256));
   my $fifth = sprintf("%02x", rand(256));
