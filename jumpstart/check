@@ -18,7 +18,7 @@ function cleanExit {
 }
 
 sumBin=$(which sum)
-if [[ -z $t || ! -f $t ]]
+if [[ -z $sumBin || ! -f $sumBin ]]
 then
   echo -e "You need to install a 'sum' tool."
   echo -e "If you have a sum tool installed, then fix your path, and try this again"
@@ -42,10 +42,15 @@ then
   (echo -e "Can't make backup of $rulesOkFile:\n$operation" ; cleanExit 1)
 fi
 
+# Getting rid of some whitespace
 sed 's/\s\s*/ /g; s/^\s\s*//g; /^#/d; /^$/d' $rulesFile > $rulesOkFileBackup
 
 while read line
 do
+  if [[ $(echo "$line" | egrep '^probe') ]]
+  then
+    continue
+  fi
   # Should be 5 words
   words=$(echo -e "$line" | wc -w)
   if [[ $words != 5 ]]
