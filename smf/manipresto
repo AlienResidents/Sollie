@@ -1,6 +1,173 @@
 #!/usr/bin/env perl
+#
+# I make basic SMF XML files for import by `svccfg import`.
+#
 
 
 use warnings;
 use strict;
+use IO::File;
+use XML::Writer;
+use Getopt::Long;
+use Pod::Usage;
+$| = 1;
 
+use vars qw($usage $help $outputFile $output $writer $svcName $svcUser
+            $svcGroup $startProg $startProgArgs $svcCommonName);
+
+GetOptions('help|?' => \$help,
+           'file:s' => \$outputFile,
+           'name:s' => \$svcName,
+           'user:s' => \$svcUser,
+           'group:s' => \$svcGroup,
+           'startstop:s' => \$startProg,
+           'startstopargs:s' => \$startProgArgs,
+          );
+
+pod2usage(1) if $help;
+pod2usage(-exitstatus => 1, -verbose => 2) if !$outputFile;
+pod2usage(-exitstatus => 1, -verbose => 2) if !$svcName;
+pod2usage(-exitstatus => 1, -verbose => 2) if !$svcUser;
+pod2usage(-exitstatus => 1, -verbose => 2) if !$svcGroup;
+pod2usage(-exitstatus => 1, -verbose => 2) if !$startProg;
+pod2usage(-exitstatus => 1, -verbose => 2) if !$startProgArgs;
+$svcCommonName = ucfirst($svcName);
+$output = IO::File->new("output.xml", "r+");
+$writer = new XML::Writer(DATA_MODE => 'true', DATA_INDENT => 2, OUTPUT => $output);  # will write to stdout
+$writer->xmlDecl();
+print $output "<!DOCTYPE service_bundle SYSTEM \"/usr/share/lib/xml/dtd/service_bundle.dtd.1\">\n";
+$writer->startTag("service_bundle", type => "manifest", name => "$svcName");
+  $writer->startTag("service",
+                    name => "site/$svcName",
+                    type => "service",
+                    version => "1");
+    $writer->startTag("dependency",
+                      name => "network",
+                      grouping => "require_all",
+                      restart_on => "error",
+                      type => "service");
+    $writer->emptyTag("service_fmri",
+                       value => "svc:/milestone/network:default");
+    $writer->endTag("dependency");
+    $writer->startTag("instance",
+                      name => "default",
+                      enabled => "false");
+      $writer->startTag("method_context");
+        $writer->emptyTag("method_credential",
+                          user => "$svcUser",
+                          group => "$svcGroup");
+      $writer->endTag("method_context");
+      $writer->emptyTag("exec_method",
+                        type => "method",
+                        name => "start",
+                        exec => "$startProg $startProgArgs",
+                        timeout_seconds => "60");
+      $writer->emptyTag("exec_method",
+                        type => "method",
+                        name => "stop",
+                        exec => ":kill",
+                        timeout_seconds => "60");
+      $writer->startTag("property_group",
+                        name => "startd",
+                        type => "framework");
+        $writer->emptyTag("propval",
+                          name => "duration",
+                          type => "astring",
+                          value => "contract");
+        $writer->emptyTag("propval",
+                          name => "ignore_error",
+                          type => "astring",
+                          value => "core,signal");
+      $writer->endTag("property_group");
+      $writer->startTag("property_group",
+                        name => "application",
+                        type => "application");
+      $writer->endTag("property_group");
+    $writer->endTag("instance");
+    $writer->emptyTag("stability",
+                       value => "Evolving");
+    $writer->startTag("template");
+      $writer->startTag("common_name");
+        $writer->startTag("loctext",
+                           "xml:lang" => "C");
+          $writer->characters("$svcCommonName");
+        $writer->endTag("loctext");
+      $writer->endTag("common_name");
+    $writer->endTag("template");
+  $writer->endTag("service");
+$writer->endTag("service_bundle");
+$writer->end();
+
+my $output = IO::File->new("output.xml", "r+");
+while (<$output>) {
+  print;
+}
+close($output);
+
+$usage = "
+  $0
+    --help   Shows this message
+    --file   Where to store this configuration (appended with .xml)
+    --name   The name of the service
+    --user   The user that this service runs as
+    --group  The group that this service runs as
+";
+
+__END__
+=head1 NAME
+
+manipresto - Create a suitable SMF specification document.
+
+=head1 SYNOPSIS
+
+manipresto --name <service name> --user <user> --group <group>
+--file <filename> --startstop <start / stop script>
+--startstopargs <args for start / stop script>
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-help>
+
+Print a brief help message and exits.
+
+=item B<-file>
+
+Where to store this configuration (appended with .xml)
+
+=item B<-name>
+
+The name of the service
+
+=item B<-user>
+
+The user that this service runs as
+
+=item B<-group>
+
+The group that this service runs as
+
+=item B<-startstop>
+
+The start / stop script used to control this service
+
+=item B<-startstopargs>
+
+The arguments that need to be passed to the startstop script
+
+=back
+
+=head1 DESCRIPTION
+
+B<manipresto> will attempt to create a very basic SMF XML document 
+suitable for use with `svccfg import`.
+
+=head1 EXAMPLES
+
+manipresto --name RPapache2 --user www --group www
+--file /lib/svc/manifest/network --startstop /var/svc/method/RPapache2
+--startstopargs ""
+
+
+=cut
