@@ -12,8 +12,8 @@ use Getopt::Long;
 use Pod::Usage;
 $| = 1;
 
-use vars qw($usage $help $outputFile $output $writer $svcName $svcUser
-            $svcGroup $startProg $startProgArgs $svcCommonName);
+use vars qw(@dependencies $usage $help $outputFile $output $writer $svcName
+            $svcUser $svcGroup $startProg $startProgArgs $svcCommonName);
 
 GetOptions('help|?' => \$help,
            'file:s' => \$outputFile,
@@ -22,6 +22,7 @@ GetOptions('help|?' => \$help,
            'group:s' => \$svcGroup,
            'startstop:s' => \$startProg,
            'startstopargs:s' => \$startProgArgs,
+           'dep:s' => \@dependencies,
           );
 
 pod2usage(1) if $help;
@@ -30,25 +31,30 @@ pod2usage(-exitstatus => 1, -verbose => 2) if !$svcName;
 pod2usage(-exitstatus => 1, -verbose => 2) if !$svcUser;
 pod2usage(-exitstatus => 1, -verbose => 2) if !$svcGroup;
 pod2usage(-exitstatus => 1, -verbose => 2) if !$startProg;
-pod2usage(-exitstatus => 1, -verbose => 2) if !$startProgArgs;
 $svcCommonName = ucfirst($svcName);
-$output = IO::File->new("output.xml", "r+");
+$output = IO::File->new($outputFile, "r+") or die "Can't open $outputFile:\n$!\n";
 $writer = new XML::Writer(DATA_MODE => 'true', DATA_INDENT => 2, OUTPUT => $output);  # will write to stdout
 $writer->xmlDecl();
-print $output "<!DOCTYPE service_bundle SYSTEM \"/usr/share/lib/xml/dtd/service_bundle.dtd.1\">\n";
+print $output "<!DOCTYPE service_bundle SYSTEM \"/usr/share/lib/xml/dtd/service_bundle.dtd.1\">";
 $writer->startTag("service_bundle", type => "manifest", name => "$svcName");
   $writer->startTag("service",
                     name => "site/$svcName",
                     type => "service",
                     version => "1");
-    $writer->startTag("dependency",
-                      name => "network",
-                      grouping => "require_all",
-                      restart_on => "error",
-                      type => "service");
-    $writer->emptyTag("service_fmri",
-                       value => "svc:/milestone/network:default");
-    $writer->endTag("dependency");
+    if (@dependencies) {
+      for my $dep (@dependencies) {
+        my $depName = $dep;
+        $depName =~ s/^.*\/(\w*):.*$/$1/g;
+        $writer->startTag("dependency",
+                          name => "$depName",
+                          grouping => "require_all",
+                          restart_on => "error",
+                          type => "service");
+        $writer->emptyTag("service_fmri",
+                          value => "$dep");
+        $writer->endTag("dependency");
+      }
+    }
     $writer->startTag("instance",
                       name => "default",
                       enabled => "false");
@@ -98,10 +104,8 @@ $writer->startTag("service_bundle", type => "manifest", name => "$svcName");
 $writer->endTag("service_bundle");
 $writer->end();
 
-my $output = IO::File->new("output.xml", "r+");
-while (<$output>) {
-  print;
-}
+seek($output, 0, SEEK_SET);
+print <$output>;
 close($output);
 
 $usage = "
@@ -122,6 +126,8 @@ manipresto - Create a suitable SMF specification document.
 
 manipresto --name <service name> --user <user> --group <group>
 --file <filename> --startstop <start / stop script>
+--dep FMRI
+--dep FMRI
 --startstopargs <args for start / stop script>
 
 =head1 OPTIONS
@@ -148,6 +154,10 @@ The user that this service runs as
 
 The group that this service runs as
 
+=item B<-dep>
+
+The dependencies FMRI required to start before this service
+
 =item B<-startstop>
 
 The start / stop script used to control this service
@@ -160,14 +170,16 @@ The arguments that need to be passed to the startstop script
 
 =head1 DESCRIPTION
 
-B<manipresto> will attempt to create a very basic SMF XML document 
-suitable for use with `svccfg import`.
+B<manipresto> will attempt to create a very basic SMF XML document
+ suitable for use with `svccfg import`.
 
 =head1 EXAMPLES
 
 manipresto --name RPapache2 --user www --group www
 --file /lib/svc/manifest/network --startstop /var/svc/method/RPapache2
---startstopargs ""
+--startstopargs "" --dep svc:/milestone/network:default
+--dep svc:/system/cron:default
+
 
 
 =cut
