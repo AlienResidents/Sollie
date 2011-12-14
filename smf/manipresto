@@ -13,9 +13,11 @@ use Pod::Usage;
 $| = 1;
 
 use vars qw(@dependencies $usage $help $outputFile $output $writer $svcName
-            $svcUser $svcGroup $startProg $startProgArgs $svcCommonName);
+            $force $svcUser $svcGroup $startProg $startProgArgs
+            $svcCommonName);
 
 GetOptions('help|?' => \$help,
+           'force|f' => \$force,
            'file:s' => \$outputFile,
            'name:s' => \$svcName,
            'user:s' => \$svcUser,
@@ -31,8 +33,22 @@ pod2usage(-exitstatus => 1, -verbose => 2) if !$svcName;
 pod2usage(-exitstatus => 1, -verbose => 2) if !$svcUser;
 pod2usage(-exitstatus => 1, -verbose => 2) if !$svcGroup;
 pod2usage(-exitstatus => 1, -verbose => 2) if !$startProg;
+
+if (-f $outputFile && !$force) {
+  print "$outputFile already exists, do you want to overwrite? [y|n] ";
+  chomp(my $ans = <STDIN>);
+  if ($ans =~ m/^y/i) {
+    $force = 1;
+  } else {
+    print "Pick another file, and start again.\n";
+    exit 0;
+  }
+}
+
+print "\"$force\"\n";
+
 $svcCommonName = ucfirst($svcName);
-$output = IO::File->new($outputFile, "r+") or die "Can't open $outputFile:\n$!\n";
+$output = IO::File->new($outputFile, "+>") or die "Can't open $outputFile:\n$!\n";
 $writer = new XML::Writer(DATA_MODE => 'true', DATA_INDENT => 2, OUTPUT => $output);  # will write to stdout
 $writer->xmlDecl();
 print $output "<!DOCTYPE service_bundle SYSTEM \"/usr/share/lib/xml/dtd/service_bundle.dtd.1\">";
