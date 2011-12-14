@@ -5,14 +5,21 @@ Most of the code is from long, long ago, so it's probably pretty shit.
 I'll be fixing it up, but feel free to point out the shit bits before I get to
 them.
 
+= jumpstart =
+This be where I keep me goodies for jumpin solaris boxes, yar!!
+
+= ldom =
+Scripts for various functions with LDOMs (Logical DOMains) / OVMs (Oracle
+Virtual Machines).
+
 = packaging =
 This is where I keep my solaris package creation tool(s).
 
-= jumpstart =
-This be where I keep me goodies for jumpin solaris boxes, yar!!
+= smf =
+Starting with Solaris 10, there is a new method for starting and stopping system
+processes at boot time.  This is called the Service Management Facility.  This
+repo contains scripts used to generate and or manage the SMF.
 
 = zones =
 Scripts for Solaris 10 zones.
 
-= ldom =
-Scripts for various functions with LDOMs (Logical DOMains) / OVMs (Oracle Virtual Machines).
