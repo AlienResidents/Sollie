@@ -1,6 +1,12 @@
 #!/usr/bin/env perl
 #
-# I make basic SMF XML files for import by `svccfg import`.
+# This script runs on any OS with XML::Writer installed.
+# This script is made for the Solaris 10 <= operating systems.
+# This makes basic SMF XML manifest files for import by `svccfg import`.
+# This does _not_ take into account your actual start / stop script being
+# in place, that's still your responsibility.  I would recommend running
+# this script from a postinstall, or at the very least, svccfg import'ing
+# the file in a postinstall stage / script.
 #
 
 
@@ -12,9 +18,10 @@ use Getopt::Long;
 use Pod::Usage;
 $| = 1;
 
-use vars qw(@dependencies $usage $help $outputFile $output $writer $svcName
-            $force $svcUser $svcGroup $startProg $startProgArgs
-            $svcCommonName);
+# The scope for most variables is going to be global, so we use the 'vars'
+# pragma.
+use vars qw(@dependencies $help $outputFile $output $writer $svcName $force
+            $svcUser $svcGroup $startProg $startProgArgs $svcCommonName);
 
 GetOptions('help|?' => \$help,
            'force|f' => \$force,
@@ -34,18 +41,12 @@ pod2usage(-exitstatus => 1, -verbose => 2) if !$svcUser;
 pod2usage(-exitstatus => 1, -verbose => 2) if !$svcGroup;
 pod2usage(-exitstatus => 1, -verbose => 2) if !$startProg;
 
+# It's not a good thing to be like the Thing and start clobbering files
+# willy nilly, so we'll just exit, and tell them how to do things.
 if (-f $outputFile && !$force) {
-  print "$outputFile already exists, do you want to overwrite? [y|n] ";
-  chomp(my $ans = <STDIN>);
-  if ($ans =~ m/^y/i) {
-    $force = 1;
-  } else {
-    print "Pick another file, and start again.\n";
-    exit 0;
-  }
+  print "$outputFile already exists, use the --force to overwrite.\n";
+  exit 0;
 }
-
-print "\"$force\"\n";
 
 $svcCommonName = ucfirst($svcName);
 $output = IO::File->new($outputFile, "+>") or die "Can't open $outputFile:\n$!\n";
@@ -124,15 +125,6 @@ seek($output, 0, SEEK_SET);
 print <$output>;
 close($output);
 
-$usage = "
-  $0
-    --help   Shows this message
-    --file   Where to store this configuration (appended with .xml)
-    --name   The name of the service
-    --user   The user that this service runs as
-    --group  The group that this service runs as
-";
-
 __END__
 =head1 NAME
 
@@ -150,35 +142,39 @@ manipresto --name <service name> --user <user> --group <group>
 
 =over 8
 
-=item B<-help>
+=item B<--help>
 
 Print a brief help message and exits.
 
-=item B<-file>
+=item B<--force | -f>
+
+Print a brief help message and exits.
+
+=item B<--file>
 
 Where to store this configuration (appended with .xml)
 
-=item B<-name>
+=item B<--name>
 
 The name of the service
 
-=item B<-user>
+=item B<--user>
 
 The user that this service runs as
 
-=item B<-group>
+=item B<--group>
 
 The group that this service runs as
 
-=item B<-dep>
+=item B<--dep>
 
 The dependencies FMRI required to start before this service
 
-=item B<-startstop>
+=item B<--startstop>
 
 The start / stop script used to control this service
 
-=item B<-startstopargs>
+=item B<--startstopargs>
 
 The arguments that need to be passed to the startstop script
 
@@ -194,7 +190,7 @@ B<manipresto> will attempt to create a very basic SMF XML document
 manipresto --name RPapache2 --user www --group www
 --file /lib/svc/manifest/network --startstop /var/svc/method/RPapache2
 --startstopargs "" --dep svc:/milestone/network:default
---dep svc:/system/cron:default
+--dep svc:/system/cron:default -f
 
 
 
