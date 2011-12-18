@@ -7,7 +7,7 @@ addresses easier, and quicker.
 
 <pre>
 my @servers = qw(hosta.example.com
-                 hostb.example.com
-                 ovmA.internal.local
-                 OVMuser@ovmB.internal.local);
+hostb.example.com
+ovmA.internal.local
+OVMuser@ovmB.internal.local);
 </pre>
