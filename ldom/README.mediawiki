@@ -1,9 +1,9 @@
 = maccas =
-Configured via /etc/maccas.conf, maccas will go out and confirm that there are
-no duplicate MAC addresses in the environment.  You can also specify the user
-you want to use for connecting to remote machines in the short format user@host.
-The remote protocol used is SSH.  You can setup shared keys to make the process
-of checking for duplicate MAC addresses easier, and quicker.
+maccas will go out and confirm that there are no duplicate MAC addresses in the
+environment.  You can also specify the user you want to use for connecting to
+remote machines in the short format user@host.  The remote protocol used is SSH.
+You can setup shared keys to make the process of checking for duplicate MAC
+addresses easier, and quicker.
 
 <pre>
 my @servers = qw(hosta.example.com
