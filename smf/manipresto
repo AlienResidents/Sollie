@@ -49,10 +49,14 @@ if (-f $outputFile && !$force) {
 }
 
 $svcCommonName = ucfirst($svcName);
-$output = IO::File->new($outputFile, "+>") or die "Can't open $outputFile:\n$!\n";
-$writer = new XML::Writer(DATA_MODE => 'true', DATA_INDENT => 2, OUTPUT => $output);  # will write to stdout
+$output = IO::File->new($outputFile, "+>") or
+  die "Can't open $outputFile:\n$!\n";
+$writer = new XML::Writer(DATA_MODE => 'true',
+                          DATA_INDENT => 2,
+                          OUTPUT => $output);
 $writer->xmlDecl();
-print $output "<!DOCTYPE service_bundle SYSTEM \"/usr/share/lib/xml/dtd/service_bundle.dtd.1\">";
+print $output "<!DOCTYPE service_bundle SYSTEM ";
+print $output "\"/usr/share/lib/xml/dtd/service_bundle.dtd.1\">";
 $writer->startTag("service_bundle", type => "manifest", name => "$svcName");
   $writer->startTag("service",
                     name => "site/$svcName",
