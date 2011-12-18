@@ -6,8 +6,10 @@ You can setup shared keys to make the process of checking for duplicate MAC
 addresses easier, and quicker.
 
 <blockquote>
+<pre>
  my @servers = qw(hosta.example.com
                  hostb.example.com
                  ovmA.internal.local
                  OVMuser@ovmB.internal.local);
+</pre>
 </blockquote>
