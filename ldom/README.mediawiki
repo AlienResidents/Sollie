@@ -5,9 +5,9 @@ remote machines in the short format user@host.  The remote protocol used is SSH.
 You can setup shared keys to make the process of checking for duplicate MAC
 addresses easier, and quicker.
 
-<pre>
+<blockquote>
  my @servers = qw(hosta.example.com
                  hostb.example.com
                  ovmA.internal.local
                  OVMuser@ovmB.internal.local);
-</pre>
+</blockquote>
