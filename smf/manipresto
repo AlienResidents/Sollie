@@ -35,14 +35,14 @@ GetOptions('help|?' => \$help,
           );
 
 pod2usage(1) if $help;
-pod2usage(-exitstatus => 1, -verbose => 2) if !$outputFile;
-pod2usage(-exitstatus => 1, -verbose => 2) if !$svcName;
-pod2usage(-exitstatus => 1, -verbose => 2) if !$svcUser;
-pod2usage(-exitstatus => 1, -verbose => 2) if !$svcGroup;
-pod2usage(-exitstatus => 1, -verbose => 2) if !$startProg;
+pod2usage(-exitstatus => 1, -verbose => 2) if !$outputFile or
+                                              !$svcName or
+                                              !$svcUser or
+                                              !$svcGroup or
+                                              !$startProg;
 
-# It's not a good thing to be like the Thing and start clobbering files
-# willy nilly, so we'll just exit, and tell them how to do things.
+# It's not a good thing to be like The Thing and start clobbering files,
+# so we'll just exit, and tell them how to do things.
 if (-f $outputFile && !$force) {
   print "$outputFile already exists, use the --force to overwrite.\n";
   exit 0;
@@ -147,39 +147,30 @@ manipresto --name <service name> --user <user> --group <group>
 =over 8
 
 =item B<--help>
-
 Print a brief help message and exits.
 
 =item B<--force | -f>
-
-Print a brief help message and exits.
+Force writing to existing file.
 
 =item B<--file>
-
 Where to store this configuration (appended with .xml)
 
 =item B<--name>
-
 The name of the service
 
 =item B<--user>
-
 The user that this service runs as
 
 =item B<--group>
-
 The group that this service runs as
 
 =item B<--dep>
-
-The dependencies FMRI required to start before this service
+The dependency FMRIs required to start before this service
 
 =item B<--startstop>
-
 The start / stop script used to control this service
 
 =item B<--startstopargs>
-
 The arguments that need to be passed to the startstop script
 
 =back
@@ -195,7 +186,5 @@ manipresto --name RPapache2 --user www --group www
 --file /lib/svc/manifest/network --startstop /var/svc/method/RPapache2
 --startstopargs "" --dep svc:/milestone/network:default
 --dep svc:/system/cron:default -f
-
-
 
 =cut
