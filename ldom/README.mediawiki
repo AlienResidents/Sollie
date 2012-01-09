@@ -9,9 +9,9 @@ Even though Oracle claims that using multicast can eliminate duplicating the
 MAC address of the LDOMs / OVMs deployed, I've seen way too many collisions
 already and I've only deployed a handful (less than 10) OVMs.
 
-<blockquote>
+<pre>
 my @servers = qw(hosta.example.com
                  hostb.example.com
                  ovmA.internal.local
                  OVMuser@ovmB.internal.local);
-</blockquote>
+</pre>
