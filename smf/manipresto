@@ -21,7 +21,7 @@ $| = 1;
 # The scope for most variables is going to be global, so we use the 'vars'
 # pragma.
 use vars qw(@dependencies @vars $help $outputFile $output $writer $svcName
-            $force $svcUser $svcGroup $startProg $startProgArgs $svcCommonName);
+            $force $svcUser $svcGroup $rcScript $svcCommonName);
 
 GetOptions('help|?' => \$help,
            'force|f' => \$force,
@@ -29,8 +29,7 @@ GetOptions('help|?' => \$help,
            'name:s' => \$svcName,
            'user:s' => \$svcUser,
            'group:s' => \$svcGroup,
-           'startstop:s' => \$startProg,
-           'startstopargs:s' => \$startProgArgs,
+           'startstop:s' => \$rcScript,
            'var:s' => \@vars,
            'dep:s' => \@dependencies,
           );
@@ -40,7 +39,7 @@ pod2usage(-exitstatus => 1, -verbose => 2) if !$outputFile or
                                               !$svcName or
                                               !$svcUser or
                                               !$svcGroup or
-                                              !$startProg;
+                                              !$rcScript;
 
 # It's not a good thing to be like The Thing and start clobbering files,
 # so we'll just exit, and tell them how to do things.
@@ -84,33 +83,45 @@ $writer->startTag("service_bundle", type => "manifest", name => "$svcName");
       $writer->startTag("exec_method",
                         type => "method",
                         name => "start",
-                        exec => "$startProg $startProgArgs",
+                        exec => "$rcScript",
                         timeout_seconds => "60");
         $writer->startTag("method_context");
           $writer->emptyTag("method_credential",
                             user => "$svcUser",
                             group => "$svcGroup");
+          $writer->startTag("method_environment");
+            if (@vars) {
+              foreach my $var (@vars) {
+                (my $var, my $value) = split(/::/, $var);
+                $writer->emptyTag("envvar",
+                                  name => "$var",
+                                  value => "$value");
+              }
+            }
+          $writer->endTag("method_environment");
         $writer->endTag("method_context");
       $writer->endTag("exec_method");
 
       $writer->startTag("exec_method",
                         type => "method",
                         name => "stop",
-                        exec => "$startProg $startProgArgs",
+                        exec => "$rcScript",
                         timeout_seconds => "60");
-        $writer->emptyTag("method_credential",
-                            user => "$svcUser",
-                            group => "$svcGroup");
-        $writer->startTag("method_environment");
-          if (@vars) {
-            foreach my $var (@vars) {
-              (my $var, my $value) = split(/::/, $var);
-              $writer->emptyTag("envvar",
-                                name => "$var",
-                                value => "$value");
+        $writer->startTag("method_context");
+          $writer->emptyTag("method_credential",
+                              user => "$svcUser",
+                              group => "$svcGroup");
+          $writer->startTag("method_environment");
+            if (@vars) {
+              foreach my $var (@vars) {
+                (my $var, my $value) = split(/::/, $var);
+                $writer->emptyTag("envvar",
+                                  name => "$var",
+                                  value => "$value");
+              }
             }
-          }
-        $writer->endTag("method_environment");
+          $writer->endTag("method_environment");
+        $writer->endTag("method_context");
       $writer->endTag("exec_method");
 
       $writer->startTag("property_group",
@@ -159,7 +170,6 @@ manipresto --name <service name> --user <user> --group <group>
 --file <filename> --startstop <start / stop script>
 --dep FMRI
 --dep FMRI
---startstopargs <args for start / stop script>
 --var port::31337
 --var port::5432
 
@@ -196,9 +206,6 @@ as the '::' is the separator for the variable and value.
 =item B<--startstop>
 The start / stop script used to control this service
 
-=item B<--startstopargs>
-The arguments that need to be passed to the startstop script
-
 =back
 
 =head1 DESCRIPTION
@@ -210,7 +217,7 @@ B<manipresto> will attempt to create a very basic SMF XML document
 
 manipresto --name RPapache2 --user www --group www
 --file /lib/svc/manifest/network --startstop /var/svc/method/RPapache2
---startstopargs "" --dep svc:/milestone/network:default
+--dep svc:/milestone/network:default --var port::80 -var port::443
 --dep svc:/system/cron:default -f
 
 =cut
