@@ -20,8 +20,8 @@ $| = 1;
 
 # The scope for most variables is going to be global, so we use the 'vars'
 # pragma.
-use vars qw(@dependencies $help $outputFile $output $writer $svcName $force
-            $svcUser $svcGroup $startProg $startProgArgs $svcCommonName);
+use vars qw(@dependencies @vars $help $outputFile $output $writer $svcName
+            $force $svcUser $svcGroup $startProg $startProgArgs $svcCommonName);
 
 GetOptions('help|?' => \$help,
            'force|f' => \$force,
@@ -31,6 +31,7 @@ GetOptions('help|?' => \$help,
            'group:s' => \$svcGroup,
            'startstop:s' => \$startProg,
            'startstopargs:s' => \$startProgArgs,
+           'var:s' => \@vars,
            'dep:s' => \@dependencies,
           );
 
@@ -79,21 +80,39 @@ $writer->startTag("service_bundle", type => "manifest", name => "$svcName");
     $writer->startTag("instance",
                       name => "default",
                       enabled => "false");
-      $writer->startTag("method_context");
-        $writer->emptyTag("method_credential",
-                          user => "$svcUser",
-                          group => "$svcGroup");
-      $writer->endTag("method_context");
-      $writer->emptyTag("exec_method",
+
+      $writer->startTag("exec_method",
                         type => "method",
                         name => "start",
                         exec => "$startProg $startProgArgs",
                         timeout_seconds => "60");
-      $writer->emptyTag("exec_method",
+        $writer->startTag("method_context");
+          $writer->emptyTag("method_credential",
+                            user => "$svcUser",
+                            group => "$svcGroup");
+        $writer->endTag("method_context");
+      $writer->endTag("exec_method");
+
+      $writer->startTag("exec_method",
                         type => "method",
                         name => "stop",
-                        exec => ":kill",
+                        exec => "$startProg $startProgArgs",
                         timeout_seconds => "60");
+        $writer->emptyTag("method_credential",
+                            user => "$svcUser",
+                            group => "$svcGroup");
+        $writer->startTag("method_environment");
+          if (@vars) {
+            foreach my $var (@vars) {
+              (my $var, my $value) = split(/::/, $var);
+              $writer->emptyTag("envvar",
+                                name => "$var",
+                                value => "$value");
+            }
+          }
+        $writer->endTag("method_environment");
+      $writer->endTag("exec_method");
+
       $writer->startTag("property_group",
                         name => "startd",
                         type => "framework");
@@ -141,6 +160,8 @@ manipresto --name <service name> --user <user> --group <group>
 --dep FMRI
 --dep FMRI
 --startstopargs <args for start / stop script>
+--var port::31337
+--var port::5432
 
 =head1 OPTIONS
 
@@ -166,6 +187,11 @@ The group that this service runs as
 
 =item B<--dep>
 The dependency FMRIs required to start before this service
+
+=item B<--var>
+This allows you to set environment variables during the execution of the start /
+ stop script.  The format is var_name::value.  Very important to have the '::', 
+as the '::' is the separator for the variable and value.
 
 =item B<--startstop>
 The start / stop script used to control this service
