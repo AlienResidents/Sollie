@@ -16,6 +16,7 @@ use IO::File;
 use XML::Writer;
 use Getopt::Long;
 use Pod::Usage;
+use File::Basename;
 $| = 1;
 
 # The scope for most variables is going to be global, so we use the 'vars'
@@ -57,11 +58,15 @@ $writer = new XML::Writer(DATA_MODE => 'true',
 $writer->xmlDecl();
 print $output "<!DOCTYPE service_bundle SYSTEM ";
 print $output "\"/usr/share/lib/xml/dtd/service_bundle.dtd.1\">";
-$writer->startTag("service_bundle", type => "manifest", name => "$svcName");
+#$writer->startTag("service_bundle", type => "manifest", name => "$svcName");
+$writer->startTag("service_bundle", type => "manifest", name => basename($svcName));
   $writer->startTag("service",
                     name => "site/$svcName",
                     type => "service",
                     version => "1");
+    $writer->emptyTag("create_default_instance",
+                      enabled => "false");
+    $writer->emptyTag("single_instance");
     if (@dependencies) {
       for my $dep (@dependencies) {
         my $depName = $dep;
@@ -76,9 +81,6 @@ $writer->startTag("service_bundle", type => "manifest", name => "$svcName");
         $writer->endTag("dependency");
       }
     }
-    $writer->emptyTag("create_default_instance",
-                      enabled => "false");
-    $writer->emptyTag("single_instance");
 
       $writer->startTag("exec_method",
                         type => "method",
