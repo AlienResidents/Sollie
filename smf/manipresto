@@ -76,14 +76,14 @@ $writer->startTag("service_bundle", type => "manifest", name => "$svcName");
         $writer->endTag("dependency");
       }
     }
-    $writer->startTag("instance",
-                      name => "default",
+    $writer->emptyTag("create_default_instance",
                       enabled => "false");
+    $writer->emptyTag("single_instance");
 
       $writer->startTag("exec_method",
                         type => "method",
                         name => "start",
-                        exec => "$rcScript",
+                        exec => "$rcScript %m",
                         timeout_seconds => "60");
         $writer->startTag("method_context");
           $writer->emptyTag("method_credential",
@@ -105,7 +105,7 @@ $writer->startTag("service_bundle", type => "manifest", name => "$svcName");
       $writer->startTag("exec_method",
                         type => "method",
                         name => "stop",
-                        exec => "$rcScript",
+                        exec => "$rcScript %m",
                         timeout_seconds => "60");
         $writer->startTag("method_context");
           $writer->emptyTag("method_credential",
@@ -140,7 +140,6 @@ $writer->startTag("service_bundle", type => "manifest", name => "$svcName");
                         name => "application",
                         type => "application");
       $writer->endTag("property_group");
-    $writer->endTag("instance");
     $writer->emptyTag("stability",
                        value => "Evolving");
     $writer->startTag("template");
