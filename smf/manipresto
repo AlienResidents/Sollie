@@ -91,16 +91,17 @@ $writer->startTag("service_bundle", type => "manifest", name => basename($svcNam
           $writer->emptyTag("method_credential",
                             user => "$svcUser",
                             group => "$svcGroup");
-          $writer->startTag("method_environment");
-            if (@vars) {
-              foreach my $var (@vars) {
-                (my $var, my $value) = split(/::/, $var);
-                $writer->emptyTag("envvar",
-                                  name => "$var",
-                                  value => "$value");
-              }
+          if (@vars) {
+print "here\n";
+            $writer->startTag("method_environment");
+            foreach my $var (@vars) {
+              (my $var, my $value) = split(/::/, $var);
+              $writer->emptyTag("envvar",
+                                name => "$var",
+                                value => "$value");
             }
-          $writer->endTag("method_environment");
+            $writer->endTag("method_environment");
+          }
         $writer->endTag("method_context");
       $writer->endTag("exec_method");
 
@@ -113,16 +114,16 @@ $writer->startTag("service_bundle", type => "manifest", name => basename($svcNam
           $writer->emptyTag("method_credential",
                               user => "$svcUser",
                               group => "$svcGroup");
-          $writer->startTag("method_environment");
-            if (@vars) {
-              foreach my $var (@vars) {
-                (my $var, my $value) = split(/::/, $var);
-                $writer->emptyTag("envvar",
-                                  name => "$var",
-                                  value => "$value");
-              }
+          if (@vars) {
+            $writer->startTag("method_environment");
+            foreach my $var (@vars) {
+              (my $var, my $value) = split(/::/, $var);
+              $writer->emptyTag("envvar",
+                                name => "$var",
+                                value => "$value");
             }
-          $writer->endTag("method_environment");
+            $writer->endTag("method_environment");
+          }
         $writer->endTag("method_context");
       $writer->endTag("exec_method");
 
