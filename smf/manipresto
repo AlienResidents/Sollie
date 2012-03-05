@@ -172,8 +172,8 @@ manipresto --name <service name> --user <user> --group <group>
 --file <filename> --startstop <start / stop script>
 --dep FMRI
 --dep FMRI
---var port::31337
---var port::5432
+--var var_name1::value
+--var var_name2::value
 
 =head1 OPTIONS
 
@@ -203,7 +203,8 @@ The dependency FMRIs required to start before this service
 =item B<--var>
 This allows you to set environment variables during the execution of the start /
  stop script.  The format is var_name::value.  Very important to have the '::', 
-as the '::' is the separator for the variable and value.
+as the '::' is the separator for the variable and value.  The variable names
+should also be unique of course.
 
 =item B<--startstop>
 The start / stop script used to control this service
@@ -218,8 +219,8 @@ B<manipresto> will attempt to create a very basic SMF XML document
 =head1 EXAMPLES
 
 manipresto --name RPapache2 --user www --group www
---file /lib/svc/manifest/network --startstop /var/svc/method/RPapache2
---dep svc:/milestone/network:default --var port::80 -var port::443
+--file /var/svc/manifest/network --startstop /lib/svc/method/RPapache2
+--dep svc:/milestone/network:default --var ports::80,443
 --dep svc:/system/cron:default -f
 
 =cut
