@@ -1,9 +1,5 @@
 #!/usr/bin/env perl
 #
-# I create a MAC address using the vendor Sun Microsystems (00:14:4F)
-# then check the existing LDOMs (OVMs) for duplicate MAC addresses, and once
-# I have confirmed no duplicate MAC addresses, I'll return with the new MAC.
-#
 # vim:
 #     :set tabstop=2
 #     :set expandtab
@@ -11,23 +7,38 @@
 
 use warnings;
 use strict;
-use vars qw(@macs @lines $newMac);
+use Getopt::Long;
+use vars qw(@macs @newMacs @lines $help $create $verbose $debug);
 my $vendorPrefix = "00:14:4f";
 
 my $usage = "
 $0
 ";
 
+# {{{ GetOptions
+GetOptions('help|?' => \$help,
+           'verbose|v' => \$verbose,
+           'debug|d' => \$debug,
+           'create|c:s' => \$create,
+          );
+pod2usage(1) if $help;
+$create = 1 if (!$create);
+#}}}
 # {{{ makeMac
 # Making the last three octets
 # I would put a single sprintf line, but I noticed that there was a close
 # relation to the numbers being created, so I separated them out so it looks
 # more random (no idea if it really if it is more random or not).
 sub makeMac {
-  my $fourth = sprintf("%02x", rand(256));
-  my $fifth = sprintf("%02x", rand(256));
-  my $sixth = sprintf("%02x", rand(256));
-  $newMac = "$vendorPrefix:$fourth:$fifth:$sixth";
+  my $count = shift;
+  my @makeMacs;
+  for (my $i=0;$i < $count;$i++) {
+    my $fourth = sprintf("%02x", rand(256));
+    my $fifth = sprintf("%02x", rand(256));
+    my $sixth = sprintf("%02x", rand(256));
+    push @makeMacs, "$vendorPrefix:$fourth:$fifth:$sixth";
+  }
+  return @makeMacs;
 }
 # }}}
 # {{{ @servers
@@ -43,32 +54,92 @@ if (!scalar(@servers)) {
 # {{{ remoteCommand
 my $remoteCommand = "/usr/sbin/ldm ls -l -o network | grep '$vendorPrefix'";
 # }}}
-# {{{ Buiding @lines
+# {{{ Main
+# {{{ @lines generation
 foreach my $server (@servers) {
-  print "Acquiring MACs from $server: ";
+  print "Acquiring MACs from $server: " if ($verbose);
   push @lines, qx/ssh $server "$remoteCommand"/;
-  print "Done.\n";
+  print "Done.\n" if ($verbose);
 }
 # }}}
-# {{{ Buiding @macs
+# {{{ @macs generation
 foreach my $line (@lines) {
   chomp($line);
-  $line =~ s/^.*(00:14:4f(:[0-9|a-f]{2}){3}).*$/$1/g;
+  $line =~ s/^.*($vendorPrefix(:[0-9|a-f]{2}){3}).*$/$1/g;
   push @macs, $line;
 }
 # }}}
-my $duplicate = 1;
-print "Verifying MAC addresses... ";
-while ($duplicate eq 1) {
-  $duplicate = 0;
-  makeMac;
-  foreach my $mac (@macs) {
-    if ($mac eq $newMac) {
-      $duplicate = 1;
-      last;
+sub checkMacs {
+  my $existingMacs = shift;
+  my $newMacs = shift;
+  for (my $i=0;$i < scalar(@$existingMacs);$i++) {
+    for (my $j=0;$j < scalar(@$newMacs);$j++) {
+      print "$existingMacs->[$i] -- $newMacs->[$j]\n" if ($debug);
+      if ($existingMacs->[$i] eq $newMacs->[$j]) {
+        print "MAC Address Collision: $newMacs->[$j]\n" if ($verbose);
+        my @tmpMac = makeMac('1');
+        while ($tmpMac[0] eq $existingMacs->[$i]) {
+          @tmpMac = makeMac('1');
+        }
+        $newMacs->[$j] = $tmpMac[0];
+      }
     }
   }
+  return $newMacs;
 }
-print "Done.\n";
-print "=============================================\n";
-print "$newMac\n";
+my $duplicate;
+print "Verifying MAC addresses... " if ($verbose);
+@newMacs = makeMac($create);
+my $goodMacs = checkMacs(\@macs, \@newMacs);
+print "Done.\n" if ($verbose);
+print "=============================================\n" if ($verbose);
+foreach my $mac (@$goodMacs) {
+  print "$mac\n";
+}
+#}}}
+# {{{ POD
+__END__
+=head1 NAME
+
+maccas - Determine free MAC addresses for OVM creation
+
+=head1 SYNOPSIS
+
+maccas [options]
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<--help>
+Print a brief help message and exits.
+
+=item B<--debug>
+Prints out debugging statements as it gathers data.
+
+=item B<--verbose>
+Prints out statements as it gathers data.
+
+=item B<--create>
+How many MAC addresses to create.
+
+=back
+
+=head1 DESCRIPTION
+
+B<maccas> will create a list of MAC addresses.  For each MAC address in the
+list, <maccas> will determine if that is a valid MAC address for the configured
+environment.  The environment is configured by supplying 1 or more server in
+the @servers array near the top of this script.  The checks performed by
+<maccas> will be done over SSH to those servers.
+
+The MAC addresses created by <maccas> can then be used to create network devices
+ (vsw, vnet).
+
+=head1 EXAMPLES
+
+maccas --create 6 -v
+maccas --create 6 -d
+
+=cut
+#}}}
