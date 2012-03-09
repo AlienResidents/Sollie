@@ -69,6 +69,8 @@ foreach my $line (@lines) {
   push @macs, $line;
 }
 # }}}
+# checkMacs # {{{
+# We need to go through each list and compare MAC addresses
 sub checkMacs {
   my $existingMacs = shift;
   my $newMacs = shift;
@@ -87,6 +89,7 @@ sub checkMacs {
   }
   return $newMacs;
 }
+# }}}
 my $duplicate;
 print "Verifying MAC addresses... " if ($verbose);
 @newMacs = makeMac($create);
