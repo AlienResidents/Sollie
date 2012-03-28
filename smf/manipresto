@@ -161,6 +161,7 @@ seek($output, 0, SEEK_SET);
 print <$output>;
 close($output);
 
+# {{{ POD
 __END__
 =head1 NAME
 
@@ -224,3 +225,4 @@ manipresto --name RPapache2 --user www --group www
 --dep svc:/system/cron:default -f
 
 =cut
+#}}}
