@@ -5,7 +5,7 @@ modified version of the catalog create script that some dude wrote (says so at
 the top of the file).
 
 = mkpkg =
-This is used to, you guessed it, roll a solaris package from a directory, or
+This is used to, you guessed it, roll a solaris package (SVR4) from a directory, or
 tarball.  I'm sure it could be expanded to create from zip files, but fuck it
 for now, I use tar, and so should you.  It doesn't create a complete package as
 far as all the little scripts that some people want / require.  I don't need
